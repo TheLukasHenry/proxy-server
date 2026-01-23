@@ -1,0 +1,117 @@
+{
+  "version": "1.0",
+  "description": "MCP Servers Configuration - Single Proxy Approach",
+  "generated": "Auto-deploy demo for Lukas",
+  "servers": [
+    {
+      "id": "github",
+      "name": "GitHub MCP",
+      "url": "http://mcp-proxy:8000/github",
+      "type": "openapi",
+      "description": "GitHub repository operations, issues, PRs, code search",
+      "tier": "http",
+      "groups": ["MCP-Admin", "MCP-GitHub", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": "GITHUB_TOKEN"
+    },
+    {
+      "id": "linear",
+      "name": "Linear MCP",
+      "url": "http://mcp-proxy:8000/linear",
+      "type": "openapi",
+      "description": "Linear issue tracking and project management",
+      "tier": "http",
+      "groups": ["MCP-Admin", "Tenant-Google"],
+      "api_key_env": "LINEAR_API_KEY"
+    },
+    {
+      "id": "notion",
+      "name": "Notion MCP",
+      "url": "http://mcp-proxy:8000/notion",
+      "type": "openapi",
+      "description": "Notion knowledge base and documentation",
+      "tier": "http",
+      "groups": ["MCP-Admin", "Tenant-Google", "Tenant-AcmeCorp"],
+      "api_key_env": "NOTION_API_KEY"
+    },
+    {
+      "id": "filesystem",
+      "name": "Filesystem MCP",
+      "url": "http://mcp-proxy:8000/filesystem",
+      "type": "openapi",
+      "description": "Local filesystem operations (sandboxed)",
+      "tier": "local",
+      "groups": ["MCP-Admin", "MCP-Filesystem", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": null
+    },
+    {
+      "id": "atlassian",
+      "name": "Atlassian MCP",
+      "url": "http://mcp-proxy:8000/atlassian",
+      "type": "openapi",
+      "description": "Jira issues and Confluence documentation",
+      "tier": "sse",
+      "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft"],
+      "api_key_env": "ATLASSIAN_TOKEN"
+    },
+    {
+      "id": "slack",
+      "name": "Slack MCP",
+      "url": "http://mcp-proxy:8000/slack",
+      "type": "openapi",
+      "description": "Slack messaging and channel operations",
+      "tier": "http",
+      "groups": ["MCP-Admin", "Tenant-AcmeCorp"],
+      "api_key_env": "SLACK_BOT_TOKEN"
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab MCP",
+      "url": "http://mcp-proxy:8000/gitlab",
+      "type": "openapi",
+      "description": "GitLab repository and CI/CD operations",
+      "tier": "http",
+      "groups": ["MCP-Admin", "Tenant-Microsoft"],
+      "api_key_env": "GITLAB_TOKEN"
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot MCP",
+      "url": "http://mcp-proxy:8000/hubspot",
+      "type": "openapi",
+      "description": "HubSpot CRM and marketing operations",
+      "tier": "http",
+      "groups": ["MCP-Admin", "Tenant-AcmeCorp"],
+      "api_key_env": "HUBSPOT_API_KEY"
+    },
+    {
+      "id": "excel",
+      "name": "Excel Creator",
+      "url": "http://mcp-proxy:8000/excel",
+      "type": "openapi",
+      "description": "Create Excel spreadsheets with data, formulas, and charts",
+      "tier": "local",
+      "groups": ["MCP-Admin", "MCP-Excel", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": null
+    }
+  ],
+  "special_groups": {
+    "MCP-Admin": {
+      "description": "Full access to ALL MCP servers",
+      "access": "*"
+    }
+  },
+  "tenants": {
+    "Tenant-Google": {
+      "description": "Google tenant - engineering team",
+      "servers": ["github", "linear", "notion", "filesystem", "atlassian"]
+    },
+    "Tenant-Microsoft": {
+      "description": "Microsoft tenant - development team",
+      "servers": ["github", "filesystem", "atlassian", "gitlab"]
+    },
+    "Tenant-AcmeCorp": {
+      "description": "AcmeCorp tenant - sales and support",
+      "servers": ["notion", "filesystem", "slack", "hubspot"]
+    }
+  }
+}
