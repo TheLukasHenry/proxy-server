@@ -1,0 +1,269 @@
+# =============================================================================
+# MCP Proxy - Hetzner Production Deployment
+# =============================================================================
+#
+# Single docker-compose file for Hetzner VPS deployment with:
+# - Traefik (reverse proxy + SSL + OIDC)
+# - Open WebUI (AI chat interface)
+# - MCP Proxy (multi-tenant tool gateway)
+# - Auth Service (ForwardAuth - group lookup from PostgreSQL)
+# - Admin Portal (user/group management)
+# - PostgreSQL (database)
+# - Redis (sessions/cache)
+#
+# Usage:
+#   1. Copy .env.hetzner.example to .env and fill in values
+#   2. Set up DNS records pointing to your VPS IP
+#   3. docker compose -f docker-compose.hetzner.yml up -d
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # TRAEFIK - Reverse Proxy + SSL + OIDC
+  # ===========================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - traefik-certs:/letsencrypt
+    environment:
+      # Microsoft Entra ID OIDC (for traefikoidc plugin)
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - MICROSOFT_TENANT_ID=${MICROSOFT_CLIENT_TENANT_ID}
+    networks:
+      - traefik-public
+      - internal
+    labels:
+      - "traefik.enable=true"
+      # Dashboard (optional - disable in production)
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+
+  # ===========================================================================
+  # AUTH SERVICE - ForwardAuth (Group Lookup from PostgreSQL)
+  # ===========================================================================
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"  # Internal only, not exposed
+
+  # ===========================================================================
+  # OPEN WEBUI - AI Chat Interface
+  # ===========================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: open-webui
+    restart: unless-stopped
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # Ollama connection
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      # OpenAI connection
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
+      # Database
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # Vector Database
+      - VECTOR_DB=pgvector
+      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_REDIS=true
+      # User headers (from Traefik auth)
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - BYPASS_MODEL_ACCESS_CONTROL=true
+      # DISABLE OAuth in Open WebUI - Traefik handles it!
+      - ENABLE_OAUTH_SIGNUP=false
+      - ENABLE_LOGIN_FORM=false
+      # Trust proxy headers (Traefik sets user info)
+      - TRUSTED_HEADER_AUTHENTICATION=true
+      - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-User-Email
+      - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-User-Name
+      # MCP Proxy tool connection
+      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"openapi.json","auth_type":"none"}]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openwebui.rule=Host(`app.${DOMAIN}`)"
+      - "traefik.http.routers.openwebui.tls=true"
+      - "traefik.http.routers.openwebui.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.openwebui.middlewares=auth-chain@file"
+      - "traefik.http.services.openwebui.loadbalancer.server.port=8080"
+
+  # ===========================================================================
+  # MCP PROXY - Multi-Tenant Tool Gateway
+  # ===========================================================================
+  mcp-proxy:
+    build: ./mcp-proxy
+    container_name: mcp-proxy
+    restart: unless-stopped
+    environment:
+      - DEBUG=false
+      # API Gateway Mode - trust headers from Traefik
+      - API_GATEWAY_MODE=true
+      - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups
+      # Database for permission lookups
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # MCP Server connections
+      - MCP_FILESYSTEM_URL=http://mcp-filesystem:8001
+      - MCP_GITHUB_URL=http://mcp-github:8000
+      # API Keys
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcpproxy.rule=Host(`mcp.${DOMAIN}`)"
+      - "traefik.http.routers.mcpproxy.tls=true"
+      - "traefik.http.routers.mcpproxy.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mcpproxy.middlewares=auth-chain@file"
+      - "traefik.http.services.mcpproxy.loadbalancer.server.port=8000"
+
+  # ===========================================================================
+  # ADMIN PORTAL - User/Group Management
+  # ===========================================================================
+  admin-portal:
+    build: ./admin-portal
+    container_name: admin-portal
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-admin@example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminportal.rule=Host(`admin.${DOMAIN}`)"
+      - "traefik.http.routers.adminportal.tls=true"
+      - "traefik.http.routers.adminportal.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.adminportal.middlewares=admin-auth-chain@file"
+      - "traefik.http.services.adminportal.loadbalancer.server.port=8080"
+
+  # ===========================================================================
+  # POSTGRESQL - Database
+  # ===========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=openwebui
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+  # ===========================================================================
+  # REDIS - Sessions & Cache
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+  # ===========================================================================
+  # MCP SERVERS (Examples - add more as needed)
+  # ===========================================================================
+  mcp-filesystem:
+    image: node:20-slim
+    container_name: mcp-filesystem
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8001 --api-key ${MCP_API_KEY:-mcp-secret-key} -- npx -y @modelcontextprotocol/server-filesystem /data"
+    volumes:
+      - ./mcp-data:/data
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+  mcp-github:
+    build: ./mcp-servers/github
+    container_name: mcp-github
+    restart: unless-stopped
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  traefik-public:
+    external: true
+  internal:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  traefik-certs:
+  postgres-data:
+  redis-data:
+  open-webui-data:

@@ -1,0 +1,117 @@
+# =============================================================================
+# Traefik Dynamic Configuration - Middlewares
+# =============================================================================
+#
+# Defines middleware chains for authentication:
+#
+# 1. traefikoidc - Microsoft Entra ID OIDC authentication
+# 2. auth-forwardauth - Calls auth-service to get user groups from PostgreSQL
+# 3. auth-chain - Combines OIDC + ForwardAuth for protected routes
+# 4. admin-auth-chain - Same + admin check for Admin Portal
+#
+# =============================================================================
+
+http:
+  middlewares:
+    # =========================================================================
+    # OIDC Authentication (Microsoft Entra ID)
+    # =========================================================================
+    # Uses traefikoidc plugin to authenticate users via Microsoft login
+    # After login, sets X-Forwarded-User header with user's email
+    #
+    # Plugin: https://plugins.traefik.io/plugins/628c9f24ffc0cd18356a9799/traefik-oidc
+    #
+    traefikoidc:
+      plugin:
+        traefikoidc:
+          # Microsoft Entra ID endpoints
+          Provider:
+            UrlAuth: "https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize"
+            UrlToken: "https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token"
+            UrlUserInfo: "https://graph.microsoft.com/oidc/userinfo"
+
+          # OAuth client credentials
+          ClientID: "${MICROSOFT_CLIENT_ID}"
+          ClientSecret: "${MICROSOFT_CLIENT_SECRET}"
+
+          # Callback URL (must match Azure app registration)
+          CallbackURL: "https://app.${DOMAIN}/oauth2/callback"
+
+          # Scopes
+          Scopes:
+            - openid
+            - profile
+            - email
+
+          # Session settings
+          SessionEncryptionKey: "${WEBUI_SECRET_KEY}"
+          SessionCookieName: "_traefik_oidc"
+
+          # Header to set with user email
+          ForwardedHeaders:
+            - "X-Forwarded-User"
+
+    # =========================================================================
+    # ForwardAuth - Get user groups from PostgreSQL
+    # =========================================================================
+    # Calls auth-service which:
+    # 1. Reads X-Forwarded-User header (set by traefikoidc)
+    # 2. Looks up user's groups in PostgreSQL
+    # 3. Returns X-User-Email, X-User-Groups, X-User-Admin headers
+    #
+    auth-forwardauth:
+      forwardAuth:
+        address: "http://auth-service:8000/auth"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - "X-User-Email"
+          - "X-User-Groups"
+          - "X-User-Admin"
+          - "X-User-Name"
+
+    # =========================================================================
+    # Auth Chain - OIDC + ForwardAuth
+    # =========================================================================
+    # Use this for protected routes (Open WebUI, MCP Proxy)
+    #
+    auth-chain:
+      chain:
+        middlewares:
+          - traefikoidc
+          - auth-forwardauth
+
+    # =========================================================================
+    # Admin Auth Chain - OIDC + ForwardAuth + Admin Check
+    # =========================================================================
+    # Use this for Admin Portal (only admins can access)
+    # Note: Admin check is done in auth-service, not as separate middleware
+    #
+    admin-auth-chain:
+      chain:
+        middlewares:
+          - traefikoidc
+          - auth-forwardauth
+          # Admin Portal checks X-User-Admin header internally
+
+    # =========================================================================
+    # Rate Limiting (optional)
+    # =========================================================================
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+
+    # =========================================================================
+    # Security Headers (optional)
+    # =========================================================================
+    secure-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        frameDeny: true
+        sslRedirect: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: "SAMEORIGIN"

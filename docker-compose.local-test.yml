@@ -1,0 +1,209 @@
+# =============================================================================
+# MCP Proxy - LOCAL TESTING (Hetzner Architecture)
+# =============================================================================
+#
+# Test the Hetzner architecture locally WITHOUT:
+# - SSL certificates
+# - Domain names
+# - Traefik OIDC (simulated with test headers)
+#
+# This lets you test the auth-service and admin-portal locally.
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in values
+#   2. docker compose -f docker-compose.local-test.yml up -d
+#   3. Open http://localhost:3000 (Open WebUI)
+#   4. Open http://localhost:8080 (Admin Portal)
+#   5. MCP Proxy at http://localhost:8000
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # AUTH SERVICE - ForwardAuth (Group Lookup from PostgreSQL)
+  # ===========================================================================
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    ports:
+      - "8090:8000"  # Exposed for testing
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY:-local-secret-key}
+      - DEBUG=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===========================================================================
+  # ADMIN PORTAL - User/Group Management
+  # ===========================================================================
+  admin-portal:
+    build: ./admin-portal
+    container_name: admin-portal
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY:-local-secret-key}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-admin@example.com,test@example.com}
+      - DEBUG=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===========================================================================
+  # OPEN WEBUI - AI Chat Interface
+  # ===========================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-local-secret-key}
+      # Ollama (optional)
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # OpenAI (optional)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Database
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      # Vector Database
+      - VECTOR_DB=pgvector
+      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_REDIS=true
+      # LOCAL TESTING: Enable login form (no Traefik OIDC)
+      - ENABLE_LOGIN_FORM=true
+      - ENABLE_OAUTH_SIGNUP=false
+      # Forward user headers to MCP Proxy
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - BYPASS_MODEL_ACCESS_CONTROL=true
+      # MCP Proxy connection (key and config fields required for Open WebUI v0.7+)
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"openapi.json","auth_type":"none","key":"mcp-proxy","config":{}}]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===========================================================================
+  # MCP PROXY - Multi-Tenant Tool Gateway
+  # ===========================================================================
+  mcp-proxy:
+    build: ./mcp-proxy
+    container_name: mcp-proxy
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      # API Gateway Mode - trust headers (simulates Traefik)
+      - API_GATEWAY_MODE=true
+      - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups
+      # Database for permission lookups
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      # MCP Server connections
+      - MCP_FILESYSTEM_URL=http://mcp-filesystem:8001
+      - MCP_GITHUB_URL=http://mcp-github:8000
+      # API Keys
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-filesystem:
+        condition: service_started
+    restart: unless-stopped
+
+  # ===========================================================================
+  # POSTGRESQL - Database
+  # ===========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localdev}
+      - POSTGRES_DB=openwebui
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ===========================================================================
+  # REDIS - Sessions & Cache
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ===========================================================================
+  # OLLAMA - Local LLM (Optional)
+  # ===========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  # ===========================================================================
+  # MCP SERVERS
+  # ===========================================================================
+  mcp-filesystem:
+    image: node:20-slim
+    container_name: mcp-filesystem
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8001 --api-key ${MCP_API_KEY:-test-key} -- npx -y @modelcontextprotocol/server-filesystem /data"
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./mcp-data:/data
+    restart: unless-stopped
+
+  mcp-github:
+    build: ./mcp-servers/github
+    container_name: mcp-github
+    ports:
+      - "8002:8000"
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN:-}
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+    restart: unless-stopped
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  postgres-data:
+  redis-data:
+  open-webui-data:
+  ollama-data:
