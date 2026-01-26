@@ -1,0 +1,84 @@
+# =============================================================================
+# MCP Proxy - Phase 1 Deployment (Proxy + PostgreSQL Only)
+# =============================================================================
+#
+# Minimal deployment for testing MCP Proxy before full stack.
+# No Traefik, no auth service, no Open WebUI yet.
+#
+# Usage:
+#   1. Copy .env.example to .env and set POSTGRES_PASSWORD
+#   2. docker compose -f docker-compose.proxy-only.yml up -d
+#   3. Test: curl http://localhost:8000/health
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # MCP PROXY - Multi-Tenant Tool Gateway
+  # ===========================================================================
+  mcp-proxy:
+    build: ./mcp-proxy
+    container_name: mcp-proxy
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      # No auth for Phase 1 - direct access
+      - API_GATEWAY_MODE=false
+      # Database for permission lookups
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui123}@postgres:5432/openwebui
+      # OpenAI (for future use)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      # MCP API Key
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      # GitHub (optional)
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # POSTGRESQL - Database
+  # ===========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui123}
+      - POSTGRES_DB=openwebui
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mcp-network
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  mcp-network:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  postgres-data:
