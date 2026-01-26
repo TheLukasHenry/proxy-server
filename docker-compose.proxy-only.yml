@@ -24,6 +24,10 @@ services:
       - "8000:8000"
     environment:
       - DEBUG=true
+      # Use FastAPI mode only (not dual) for simpler setup
+      - MCP_MODE=fastapi
+      # Skip cache refresh on startup for fast boot
+      - SKIP_CACHE_REFRESH=true
       # No auth for Phase 1 - direct access
       - API_GATEWAY_MODE=false
       # Database for permission lookups

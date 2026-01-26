@@ -118,24 +118,31 @@ async def refresh_tools_cache():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    # Startup: refresh tools cache with retry logic
-    # MCP servers may not be ready immediately on Kubernetes startup
-    max_retries = 3
-    retry_delay = 5  # seconds
+    # Check if we should skip cache refresh on startup (for faster boot)
+    skip_cache = os.getenv("SKIP_CACHE_REFRESH", "false").lower() == "true"
 
-    for attempt in range(1, max_retries + 1):
-        print(f"Refreshing tools cache (attempt {attempt}/{max_retries})...")
-        await refresh_tools_cache()
+    if skip_cache:
+        print("SKIP_CACHE_REFRESH=true - Skipping initial cache refresh")
+        print("Use POST /refresh to load tools when MCP servers are ready")
+    else:
+        # Startup: refresh tools cache with retry logic
+        # MCP servers may not be ready immediately on Kubernetes startup
+        max_retries = int(os.getenv("CACHE_REFRESH_RETRIES", "3"))
+        retry_delay = int(os.getenv("CACHE_REFRESH_DELAY", "5"))
 
-        if TOOLS_CACHE:
-            print(f"Tools cache loaded successfully: {len(TOOLS_CACHE)} tools")
-            break
-        else:
-            if attempt < max_retries:
-                print(f"No tools cached yet, waiting {retry_delay}s before retry...")
-                await asyncio.sleep(retry_delay)
+        for attempt in range(1, max_retries + 1):
+            print(f"Refreshing tools cache (attempt {attempt}/{max_retries})...")
+            await refresh_tools_cache()
+
+            if TOOLS_CACHE:
+                print(f"Tools cache loaded successfully: {len(TOOLS_CACHE)} tools")
+                break
             else:
-                print("Warning: Could not load tools after all retries. Use POST /refresh to reload.")
+                if attempt < max_retries:
+                    print(f"No tools cached yet, waiting {retry_delay}s before retry...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    print("Warning: Could not load tools after all retries. Use POST /refresh to reload.")
 
     yield
     # Shutdown: cleanup if needed
