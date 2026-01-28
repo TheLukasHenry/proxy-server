@@ -27,9 +27,8 @@ services:
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       - VECTOR_DB=pgvector
       - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
-      # Redis
-      - REDIS_URL=redis://redis:6379/0
-      - ENABLE_REDIS=true
+      # Redis disabled - Lukas: use only PostgreSQL
+      - ENABLE_REDIS=false
       # Microsoft OAuth
       - ENABLE_OAUTH_SIGNUP=true
       - ENABLE_LOGIN_FORM=true
@@ -57,8 +56,6 @@ services:
       - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"/openapi.json","auth_type":"session","key":"mcp-proxy","config":{"enable":true},"info":{"id":"mcp-proxy","name":"MCP Proxy","description":"Single proxy for all MCP servers"}}]'
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - internal
@@ -167,24 +164,6 @@ services:
       - POSTGRES_DB=openwebui
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - internal
-
-  # ==========================================================================
-  # REDIS - Sessions & Cache
-  # ==========================================================================
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    restart: unless-stopped
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -308,5 +287,4 @@ networks:
 
 volumes:
   postgres-data:
-  redis-data:
   open-webui-data:
