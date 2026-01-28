@@ -79,8 +79,9 @@ services:
       - open-webui-data:/app/backend/data
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
-      # Ollama connection
+      # Ollama connection (disabled - no Ollama on Hetzner)
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - ENABLE_OLLAMA_API=false
       # OpenAI connection
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
@@ -103,7 +104,7 @@ services:
       - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-User-Email
       - WEBUI_AUTH_TRUSTED_NAME_HEADER=X-User-Name
       # MCP Proxy tool connection
-      - TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"openapi.json","auth_type":"none"}]
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"/openapi.json","auth_type":"none","key":"mcp-proxy","config":{}}]'
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,12 +134,21 @@ services:
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups
       # Database for permission lookups
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
-      # MCP Server connections
+      # MCP Server connections (local containers)
       - MCP_FILESYSTEM_URL=http://mcp-filesystem:8001
       - MCP_GITHUB_URL=http://mcp-github:8000
-      # API Keys
+      - MCP_CLICKUP_URL=http://mcp-clickup:8000
+      - MCP_TRELLO_URL=http://mcp-trello:8000
+      - MCP_SONARQUBE_URL=http://mcp-sonarqube:8000
+      # Atlassian Official Remote MCP (SSE)
+      - ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/sse
+      # API Keys for MCP Servers
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - ATLASSIAN_API_KEY=${ATLASSIAN_API_KEY:-}
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN:-}
+      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -244,6 +254,66 @@ services:
     restart: unless-stopped
     environment:
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+  # ===========================================================================
+  # MCP CLICKUP - Task Management (177+ tools)
+  # ===========================================================================
+  mcp-clickup:
+    image: node:20-slim
+    container_name: mcp-clickup
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @chykalophia/clickup-mcp-server"
+    environment:
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+  # ===========================================================================
+  # MCP TRELLO - Kanban Boards
+  # ===========================================================================
+  mcp-trello:
+    image: node:20-slim
+    container_name: mcp-trello
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y mcp-server-trello"
+    environment:
+      - TRELLO_API_KEY=${TRELLO_API_KEY}
+      - TRELLO_TOKEN=${TRELLO_API_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=false"
+
+  # ===========================================================================
+  # MCP SONARQUBE - Code Quality Analysis
+  # ===========================================================================
+  # Using @hakatashi/sonarqube-mcp-server which has simpler schema
+  mcp-sonarqube:
+    image: node:20-slim
+    container_name: mcp-sonarqube
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @wallacewen/sonarqube-mcp-server"
+    environment:
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
+      - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - internal

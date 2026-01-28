@@ -1,0 +1,359 @@
+# kubernetes/init-mcp-servers-job.yaml
+# =============================================================================
+# MCP Servers Init Job - Single Proxy Auto-Deploy
+# =============================================================================
+#
+# This Job runs at deploy time to seed the group_tenant_mapping table.
+#
+# Demonstrates the Single Proxy approach:
+# - ONE ConfigMap with all server definitions
+# - ONE Job seeds the database
+# - NO manual UI configuration needed
+#
+# Works with:
+# - Azure Database for PostgreSQL (production)
+# - In-cluster PostgreSQL (local/dev)
+#
+# Usage:
+#   kubectl apply -f kubernetes/init-mcp-servers-job.yaml
+#
+# Prerequisites:
+#   - open-webui-secrets must exist with DATABASE_URL
+#   - Database must be accessible from the cluster
+#
+# =============================================================================
+
+---
+# ConfigMap: MCP Servers Configuration
+# This is the SINGLE SOURCE OF TRUTH for all MCP servers and permissions
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-servers-config
+  namespace: open-webui
+  labels:
+    app: mcp-servers
+    component: config
+data:
+  mcp-servers.json: |
+    {
+      "version": "1.0",
+      "description": "MCP Servers - Single Proxy Configuration",
+      "servers": [
+        {
+          "id": "github",
+          "name": "GitHub MCP",
+          "url": "http://mcp-proxy:8000/github",
+          "groups": ["MCP-Admin", "MCP-GitHub", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"]
+        },
+        {
+          "id": "linear",
+          "name": "Linear MCP",
+          "url": "http://mcp-proxy:8000/linear",
+          "groups": ["MCP-Admin", "Tenant-Google"]
+        },
+        {
+          "id": "notion",
+          "name": "Notion MCP",
+          "url": "http://mcp-proxy:8000/notion",
+          "groups": ["MCP-Admin", "Tenant-Google", "Tenant-AcmeCorp"]
+        },
+        {
+          "id": "filesystem",
+          "name": "Filesystem MCP",
+          "url": "http://mcp-proxy:8000/filesystem",
+          "groups": ["MCP-Admin", "MCP-Filesystem", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"]
+        },
+        {
+          "id": "atlassian",
+          "name": "Atlassian MCP",
+          "url": "http://mcp-proxy:8000/atlassian",
+          "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft"]
+        },
+        {
+          "id": "slack",
+          "name": "Slack MCP",
+          "url": "http://mcp-proxy:8000/slack",
+          "groups": ["MCP-Admin", "Tenant-AcmeCorp"]
+        },
+        {
+          "id": "gitlab",
+          "name": "GitLab MCP",
+          "url": "http://mcp-proxy:8000/gitlab",
+          "groups": ["MCP-Admin", "Tenant-Microsoft"]
+        },
+        {
+          "id": "hubspot",
+          "name": "HubSpot MCP",
+          "url": "http://mcp-proxy:8000/hubspot",
+          "groups": ["MCP-Admin", "Tenant-AcmeCorp"]
+        }
+      ]
+    }
+
+---
+# ConfigMap: Seeder Script
+# This script reads the config and seeds the database
+# Works with both Azure PostgreSQL and in-cluster PostgreSQL
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-seeder-script
+  namespace: open-webui
+  labels:
+    app: mcp-servers
+    component: seeder
+data:
+  seed.py: |
+    #!/usr/bin/env python3
+    """
+    Seed group_tenant_mapping from mcp-servers.json
+
+    Works with:
+    - Azure Database for PostgreSQL (with SSL)
+    - In-cluster PostgreSQL
+    """
+    import json
+    import asyncio
+    import asyncpg
+    import os
+    import sys
+    import time
+
+    DATABASE_URL = os.environ["DATABASE_URL"]
+    MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "30"))
+    RETRY_INTERVAL = int(os.environ.get("RETRY_INTERVAL", "5"))
+
+    async def wait_for_database():
+        """Wait for database to be ready with retries."""
+        print(f"Waiting for database (max {MAX_RETRIES} retries)...")
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                conn = await asyncpg.connect(DATABASE_URL)
+                await conn.execute("SELECT 1")
+                await conn.close()
+                print(f"Database is ready! (attempt {attempt})")
+                return True
+            except Exception as e:
+                print(f"  Attempt {attempt}/{MAX_RETRIES}: {type(e).__name__}")
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_INTERVAL)
+
+        print("ERROR: Database not available after max retries")
+        return False
+
+    async def main():
+        print("=" * 60)
+        print("MCP Servers Database Seeder - Single Proxy Demo")
+        print("=" * 60)
+
+        # Mask password in URL for logging
+        safe_url = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else "***"
+        print(f"Target database: ...@{safe_url}")
+
+        # Wait for database
+        if not await wait_for_database():
+            sys.exit(1)
+
+        # Load config
+        print("\nLoading configuration...")
+        with open("/config/mcp-servers.json") as f:
+            config = json.load(f)
+
+        servers = config.get("servers", [])
+        print(f"Found {len(servers)} servers in config")
+
+        # Connect to database
+        print("\nConnecting to database...")
+        conn = await asyncpg.connect(DATABASE_URL)
+
+        try:
+            # Create table if not exists
+            print("Creating table if not exists...")
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS group_tenant_mapping (
+                    group_name VARCHAR(255) NOT NULL,
+                    tenant_id VARCHAR(255) NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (group_name, tenant_id)
+                )
+            """)
+
+            # Create indexes
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_group_tenant_mapping_group
+                ON group_tenant_mapping(group_name)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_group_tenant_mapping_tenant
+                ON group_tenant_mapping(tenant_id)
+            """)
+            print("Table and indexes verified/created")
+
+            # Seed mappings
+            print("\nSeeding group->tenant mappings:")
+            print("-" * 50)
+            count = 0
+            for server in servers:
+                server_id = server["id"]
+                for group in server.get("groups", []):
+                    await conn.execute("""
+                        INSERT INTO group_tenant_mapping (group_name, tenant_id, updated_at)
+                        VALUES ($1, $2, NOW())
+                        ON CONFLICT (group_name, tenant_id)
+                        DO UPDATE SET updated_at = NOW()
+                    """, group, server_id)
+                    count += 1
+                    print(f"  {group:25} -> {server_id}")
+
+            print("-" * 50)
+            print(f"Processed {count} mappings")
+
+            # Verify
+            total = await conn.fetchval("SELECT COUNT(*) FROM group_tenant_mapping")
+            unique_groups = await conn.fetchval("SELECT COUNT(DISTINCT group_name) FROM group_tenant_mapping")
+            unique_tenants = await conn.fetchval("SELECT COUNT(DISTINCT tenant_id) FROM group_tenant_mapping")
+
+            print(f"\nDatabase summary:")
+            print(f"  Total mappings: {total}")
+            print(f"  Unique groups:  {unique_groups}")
+            print(f"  Unique tenants: {unique_tenants}")
+
+        finally:
+            await conn.close()
+
+        print("\n" + "=" * 60)
+        print("SEEDING COMPLETE!")
+        print("=" * 60)
+        print("\nSingle Proxy approach:")
+        print("  - ONE JSON file (mcp-servers.json)")
+        print("  - ONE database table (group_tenant_mapping)")
+        print("  - NO manual configuration needed")
+        print("=" * 60)
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+
+---
+# Job: Initialize MCP Servers
+# Runs once at deploy time to seed the database
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-mcp-servers
+  namespace: open-webui
+  labels:
+    app: mcp-servers
+    component: init
+  annotations:
+    description: "Seeds group_tenant_mapping table for Single Proxy auto-deploy"
+spec:
+  ttlSecondsAfterFinished: 600  # Clean up after 10 minutes
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: mcp-servers
+        component: init
+    spec:
+      restartPolicy: OnFailure
+
+      # Run the seeder (includes built-in database wait logic)
+      containers:
+        - name: seeder
+          image: python:3.11-slim
+          command:
+            - sh
+            - -c
+            - |
+              echo "Installing asyncpg..."
+              pip install --quiet asyncpg
+              echo "Running seeder..."
+              python /scripts/seed.py
+          env:
+            # DATABASE_URL from open-webui-secrets (works with Azure PostgreSQL)
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-secrets
+                  key: DATABASE_URL
+            # Retry configuration for database connection
+            - name: MAX_RETRIES
+              value: "30"
+            - name: RETRY_INTERVAL
+              value: "5"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+      volumes:
+        - name: config
+          configMap:
+            name: mcp-servers-config
+        - name: scripts
+          configMap:
+            name: mcp-seeder-script
+            defaultMode: 0755
+
+---
+# Optional: CronJob to re-sync periodically
+# Uncomment if you want to periodically refresh mappings from config
+# apiVersion: batch/v1
+# kind: CronJob
+# metadata:
+#   name: sync-mcp-servers
+#   namespace: open-webui
+#   labels:
+#     app: mcp-servers
+#     component: sync
+# spec:
+#   schedule: "0 */6 * * *"  # Every 6 hours
+#   concurrencyPolicy: Forbid
+#   jobTemplate:
+#     spec:
+#       template:
+#         spec:
+#           restartPolicy: OnFailure
+#           containers:
+#             - name: seeder
+#               image: python:3.11-slim
+#               command:
+#                 - sh
+#                 - -c
+#                 - |
+#                   pip install --quiet asyncpg
+#                   python /scripts/seed.py
+#               env:
+#                 - name: DATABASE_URL
+#                   valueFrom:
+#                     secretKeyRef:
+#                       name: open-webui-secrets
+#                       key: DATABASE_URL
+#               volumeMounts:
+#                 - name: config
+#                   mountPath: /config
+#                   readOnly: true
+#                 - name: scripts
+#                   mountPath: /scripts
+#                   readOnly: true
+#           volumes:
+#             - name: config
+#               configMap:
+#                 name: mcp-servers-config
+#             - name: scripts
+#               configMap:
+#                 name: mcp-seeder-script
+#                 defaultMode: 0755

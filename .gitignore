@@ -1,0 +1,15 @@
+.env
+*.log
+kubernetes/secrets.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Playwright
+.playwright-mcp/
+
+# IDE
+.vscode/
+.idea/

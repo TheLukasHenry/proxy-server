@@ -28,8 +28,8 @@ services:
     ports:
       - "8090:8000"  # Exposed for testing
     environment:
-      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
-      - SECRET_KEY=${WEBUI_SECRET_KEY:-local-secret-key}
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
       - DEBUG=true
     depends_on:
       postgres:
@@ -45,8 +45,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
-      - SECRET_KEY=${WEBUI_SECRET_KEY:-local-secret-key}
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
       - ADMIN_EMAILS=${ADMIN_EMAILS:-admin@example.com,test@example.com}
       - DEBUG=true
     depends_on:
@@ -65,27 +65,32 @@ services:
     volumes:
       - open-webui-data:/app/backend/data
     environment:
-      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-local-secret-key}
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # Ollama (optional)
       - OLLAMA_BASE_URL=http://ollama:11434
-      # OpenAI (optional)
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # OpenAI
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
       # Database
-      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       # Vector Database
       - VECTOR_DB=pgvector
-      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
+      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       # Redis
       - REDIS_URL=redis://redis:6379/0
       - ENABLE_REDIS=true
-      # LOCAL TESTING: Enable login form (no Traefik OIDC)
+      # Microsoft OAuth (SAME AS HETZNER)
+      - ENABLE_OAUTH_SIGNUP=true
       - ENABLE_LOGIN_FORM=true
-      - ENABLE_OAUTH_SIGNUP=false
-      # Forward user headers to MCP Proxy
-      - ENABLE_FORWARD_USER_INFO_HEADERS=true
-      - BYPASS_MODEL_ACCESS_CONTROL=true
-      # MCP Proxy connection (key and config fields required for Open WebUI v0.7+)
-      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"openapi.json","auth_type":"none","key":"mcp-proxy","config":{}}]'
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_TENANT_ID}
+      - MICROSOFT_REDIRECT_URI=${WEBUI_URL}/oauth/microsoft/callback
+      - OPENID_PROVIDER_URL=${OPENID_PROVIDER_URL}
+      - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      - WEBUI_URL=${WEBUI_URL}
+      # MCP Proxy connection
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"/openapi.json","auth_type":"none","key":"mcp-proxy","config":{}}]'
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,12 +113,21 @@ services:
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups
       # Database for permission lookups
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-localdev}@postgres:5432/openwebui
-      # MCP Server connections
+      # MCP Server connections (local containers)
       - MCP_FILESYSTEM_URL=http://mcp-filesystem:8001
       - MCP_GITHUB_URL=http://mcp-github:8000
+      - MCP_CLICKUP_URL=http://mcp-clickup:8000
+      - MCP_TRELLO_URL=http://mcp-trello:8000
+      - MCP_SONARQUBE_URL=http://mcp-sonarqube:8000
+      # Atlassian Official Remote MCP (SSE)
+      - ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/sse
       # API Keys
       - MCP_API_KEY=${MCP_API_KEY:-test-key}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - ATLASSIAN_API_KEY=${ATLASSIAN_API_KEY:-}
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN:-}
+      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,7 +148,7 @@ services:
       - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       - POSTGRES_USER=openwebui
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-localdev}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=openwebui
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
@@ -196,6 +210,60 @@ services:
       - "8002:8000"
     environment:
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN:-}
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+    restart: unless-stopped
+
+  # ===========================================================================
+  # MCP CLICKUP - Task Management (177+ tools)
+  # ===========================================================================
+  mcp-clickup:
+    image: node:20-slim
+    container_name: mcp-clickup
+    ports:
+      - "8003:8000"
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @chykalophia/clickup-mcp-server"
+    environment:
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN:-}
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+    restart: unless-stopped
+
+  # ===========================================================================
+  # MCP TRELLO - Kanban Boards
+  # ===========================================================================
+  mcp-trello:
+    image: node:20-slim
+    container_name: mcp-trello
+    ports:
+      - "8004:8000"
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y mcp-server-trello"
+    environment:
+      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      - TRELLO_TOKEN=${TRELLO_API_TOKEN:-}
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+    restart: unless-stopped
+
+  # ===========================================================================
+  # MCP SONARQUBE - Code Quality Analysis
+  # ===========================================================================
+  # Using @hakatashi/sonarqube-mcp-server which has simpler schema
+  mcp-sonarqube:
+    image: node:20-slim
+    container_name: mcp-sonarqube
+    ports:
+      - "8005:8000"
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @wallacewen/sonarqube-mcp-server"
+    environment:
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
+      - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
       - MCP_API_KEY=${MCP_API_KEY:-test-key}
     restart: unless-stopped
 

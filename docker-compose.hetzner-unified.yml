@@ -1,0 +1,312 @@
+# =============================================================================
+# MCP Proxy - Hetzner Production (Unified)
+# =============================================================================
+# Single docker-compose with ALL services. No split configs.
+# Usage: docker compose up -d
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # OPEN WEBUI - AI Chat Interface
+  # ==========================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "3100:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # LLM Connections
+      - ENABLE_OLLAMA_API=false
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      # Database
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - VECTOR_DB=pgvector
+      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_REDIS=true
+      # Microsoft OAuth
+      - ENABLE_OAUTH_SIGNUP=true
+      - ENABLE_LOGIN_FORM=true
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_TENANT_ID}
+      - MICROSOFT_REDIRECT_URI=${WEBUI_URL}/oauth/microsoft/callback
+      - OPENID_PROVIDER_URL=${OPENID_PROVIDER_URL}
+      - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      - WEBUI_URL=${WEBUI_URL}
+      # Group Management for Multi-Tenant (from local config)
+      - ENABLE_OAUTH_GROUP_MANAGEMENT=true
+      - ENABLE_OAUTH_GROUP_CREATION=true
+      - OAUTH_GROUP_CLAIM=groups
+      # Role Management (MCP-Admin group = admin role)
+      - ENABLE_OAUTH_ROLE_MANAGEMENT=true
+      - OAUTH_ADMIN_ROLES=MCP-Admin
+      # Enable Workspaces for multi-tenant
+      - ENABLE_WORKSPACE=true
+      # User headers for MCP Proxy
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - BYPASS_MODEL_ACCESS_CONTROL=true
+      # MCP Proxy tool connection - auth_type "session" sends JWT for user identity
+      # config.enable MUST be true for Open WebUI to fetch and display tool server tools
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"/openapi.json","auth_type":"session","key":"mcp-proxy","config":{"enable":true},"info":{"id":"mcp-proxy","name":"MCP Proxy","description":"Single proxy for all MCP servers"}}]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ==========================================================================
+  # MCP PROXY - Multi-Tenant Tool Gateway
+  # ==========================================================================
+  mcp-proxy:
+    build: ./mcp-proxy
+    container_name: mcp-proxy
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      - MCP_MODE=fastapi
+      - SKIP_CACHE_REFRESH=true
+      # JWT Auth - validate tokens from Open WebUI
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      - API_GATEWAY_MODE=false
+      # Database for permission lookups
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # MCP Server URLs (Docker internal network)
+      - MCP_FILESYSTEM_URL=http://mcp-filesystem:8001
+      - MCP_GITHUB_URL=http://mcp-github:8000
+      - MCP_CLICKUP_URL=http://mcp-clickup:8000
+      - MCP_TRELLO_URL=http://mcp-trello:8000
+      - MCP_SONARQUBE_URL=http://mcp-sonarqube:8000
+      - MCP_EXCEL_URL=http://mcp-excel:8000
+      - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
+      # Atlassian Remote MCP (SSE)
+      - ATLASSIAN_MCP_URL=https://mcp.atlassian.com/v1/sse
+      # API Keys (from .env - auto-enables servers that have keys)
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - ATLASSIAN_API_KEY=${ATLASSIAN_API_KEY:-}
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN:-}
+      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
+      - SONARQUBE_URL=${SONARQUBE_URL:-}
+      # Remote server API keys (auto-enables if set)
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY:-}
+      - PULUMI_ACCESS_TOKEN=${PULUMI_ACCESS_TOKEN:-}
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      # Meta-tools mode: set to 'true' to expose 3 meta-tools instead of 200+ individual tools
+      - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ==========================================================================
+  # AUTH SERVICE - ForwardAuth (Group Lookup)
+  # ==========================================================================
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    ports:
+      - "8090:8000"
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ==========================================================================
+  # ADMIN PORTAL - User/Group Management
+  # ==========================================================================
+  admin-portal:
+    build: ./admin-portal
+    container_name: admin-portal
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-admin@example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ==========================================================================
+  # POSTGRESQL - Database
+  # ==========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=openwebui
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ==========================================================================
+  # REDIS - Sessions & Cache
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ==========================================================================
+  # MCP SERVERS - Tool Containers
+  # ==========================================================================
+
+  # Filesystem - File access tools (14 tools)
+  mcp-filesystem:
+    image: node:20-slim
+    container_name: mcp-filesystem
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8001 --api-key $${MCP_API_KEY} -- npx -y @modelcontextprotocol/server-filesystem /data"
+    environment:
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    volumes:
+      - ./mcp-data:/data
+    networks:
+      - internal
+
+  # GitHub - Repository tools (26 tools)
+  mcp-github:
+    build: ./mcp-servers/github
+    container_name: mcp-github
+    restart: unless-stopped
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+
+  # ClickUp - Task management (177+ tools)
+  mcp-clickup:
+    image: node:20-slim
+    container_name: mcp-clickup
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @chykalophia/clickup-mcp-server"
+    environment:
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+
+  # Trello - Kanban boards
+  mcp-trello:
+    image: node:20-slim
+    container_name: mcp-trello
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y mcp-server-trello"
+    environment:
+      - TRELLO_API_KEY=${TRELLO_API_KEY}
+      - TRELLO_TOKEN=${TRELLO_API_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+
+  # SonarQube - Code quality analysis
+  mcp-sonarqube:
+    image: node:20-slim
+    container_name: mcp-sonarqube
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @wallacewen/sonarqube-mcp-server"
+    environment:
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
+      - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - internal
+
+  # Excel Creator - Spreadsheet generation (2 tools)
+  mcp-excel:
+    build: ./mcp-servers/excel-creator
+    container_name: mcp-excel
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # Executive Dashboard - Dashboard generation (2 tools)
+  mcp-dashboard:
+    build: ./mcp-servers/dashboard
+    container_name: mcp-dashboard
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # ==========================================================================
+  # DATABASE INIT - Seeds group_tenant_mapping from mcp-servers.json
+  # ==========================================================================
+  # ONE config file -> database at deploy time (Lukas's requirement)
+  db-init:
+    build: ./mcp-proxy
+    container_name: db-init
+    command: ["python", "/app/scripts/seed_mcp_servers.py", "--clear"]
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  open-webui-data:

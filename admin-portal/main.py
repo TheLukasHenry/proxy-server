@@ -157,9 +157,9 @@ async def dashboard():
         return get_base_html("Dashboard", "<p>Database not connected</p>")
 
     async with db_pool.acquire() as conn:
-        user_count = await conn.fetchval("SELECT COUNT(DISTINCT user_email) FROM user_group_membership")
-        group_count = await conn.fetchval("SELECT COUNT(DISTINCT group_name) FROM user_group_membership")
-        mapping_count = await conn.fetchval("SELECT COUNT(*) FROM group_tenant_mapping")
+        user_count = await conn.fetchval("SELECT COUNT(DISTINCT user_email) FROM mcp_proxy.user_group_membership")
+        group_count = await conn.fetchval("SELECT COUNT(DISTINCT group_name) FROM mcp_proxy.user_group_membership")
+        mapping_count = await conn.fetchval("SELECT COUNT(*) FROM mcp_proxy.group_tenant_mapping")
 
     content = f"""
     <h2>Dashboard</h2>
@@ -199,12 +199,12 @@ async def list_users(message: str = ""):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT user_email, array_agg(group_name) as groups
-            FROM user_group_membership
+            FROM mcp_proxy.user_group_membership
             GROUP BY user_email
             ORDER BY user_email
         """)
 
-        groups = await conn.fetch("SELECT DISTINCT group_name FROM user_group_membership ORDER BY group_name")
+        groups = await conn.fetch("SELECT DISTINCT group_name FROM mcp_proxy.user_group_membership ORDER BY group_name")
 
     users_html = ""
     for row in rows:
@@ -287,7 +287,7 @@ async def add_user_to_group(email: str = Form(...), group_name: str = Form(...),
 
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO user_group_membership (user_email, group_name)
+            INSERT INTO mcp_proxy.user_group_membership (user_email, group_name)
             VALUES ($1, $2)
             ON CONFLICT (user_email, group_name) DO NOTHING
         """, email, group_name)
@@ -302,7 +302,7 @@ async def remove_user(email: str = Form(...)):
         raise HTTPException(status_code=500, detail="Database not connected")
 
     async with db_pool.acquire() as conn:
-        await conn.execute("DELETE FROM user_group_membership WHERE user_email = $1", email.lower())
+        await conn.execute("DELETE FROM mcp_proxy.user_group_membership WHERE user_email = $1", email.lower())
 
     return RedirectResponse(url="/users?message=Removed+user", status_code=303)
 
@@ -316,7 +316,7 @@ async def list_groups(message: str = ""):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT group_name, COUNT(user_email) as user_count
-            FROM user_group_membership
+            FROM mcp_proxy.user_group_membership
             GROUP BY group_name
             ORDER BY group_name
         """)
@@ -383,8 +383,8 @@ async def delete_group(group_name: str = Form(...)):
         raise HTTPException(status_code=500, detail="Database not connected")
 
     async with db_pool.acquire() as conn:
-        await conn.execute("DELETE FROM user_group_membership WHERE group_name = $1", group_name)
-        await conn.execute("DELETE FROM group_tenant_mapping WHERE group_name = $1", group_name)
+        await conn.execute("DELETE FROM mcp_proxy.user_group_membership WHERE group_name = $1", group_name)
+        await conn.execute("DELETE FROM mcp_proxy.group_tenant_mapping WHERE group_name = $1", group_name)
 
     return RedirectResponse(url="/groups?message=Deleted+group", status_code=303)
 
@@ -398,11 +398,11 @@ async def list_mappings(message: str = ""):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT group_name, tenant_id, created_at
-            FROM group_tenant_mapping
+            FROM mcp_proxy.group_tenant_mapping
             ORDER BY group_name, tenant_id
         """)
 
-        groups = await conn.fetch("SELECT DISTINCT group_name FROM user_group_membership ORDER BY group_name")
+        groups = await conn.fetch("SELECT DISTINCT group_name FROM mcp_proxy.user_group_membership ORDER BY group_name")
 
     mappings_html = ""
     for row in rows:
@@ -483,7 +483,7 @@ async def add_mapping(group_name: str = Form(...), tenant_id: str = Form(...)):
 
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO group_tenant_mapping (group_name, tenant_id)
+            INSERT INTO mcp_proxy.group_tenant_mapping (group_name, tenant_id)
             VALUES ($1, $2)
             ON CONFLICT (group_name, tenant_id) DO NOTHING
         """, group_name, tenant_id)
@@ -499,7 +499,7 @@ async def delete_mapping(group_name: str = Form(...), tenant_id: str = Form(...)
 
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            DELETE FROM group_tenant_mapping
+            DELETE FROM mcp_proxy.group_tenant_mapping
             WHERE group_name = $1 AND tenant_id = $2
         """, group_name, tenant_id)
 
@@ -516,7 +516,7 @@ async def api_list_users():
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT user_email, array_agg(group_name) as groups
-            FROM user_group_membership
+            FROM mcp_proxy.user_group_membership
             GROUP BY user_email
             ORDER BY user_email
         """)
@@ -533,7 +533,7 @@ async def api_list_groups():
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT group_name, COUNT(user_email) as user_count
-            FROM user_group_membership
+            FROM mcp_proxy.user_group_membership
             GROUP BY group_name
             ORDER BY group_name
         """)
@@ -550,7 +550,7 @@ async def api_list_mappings():
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT group_name, tenant_id
-            FROM group_tenant_mapping
+            FROM mcp_proxy.group_tenant_mapping
             ORDER BY group_name, tenant_id
         """)
 
