@@ -1,0 +1,255 @@
+# kubernetes/register-webui-tools-job.yaml
+# =============================================================================
+# Open WebUI Tool Registration Job - Single Proxy Auto-Deploy
+# =============================================================================
+#
+# This Job registers MCP servers in Open WebUI via API at deploy time.
+#
+# Part of the Single Proxy approach:
+# - Reads mcp-servers.json (same config as database seeder)
+# - Calls Open WebUI API to register tool servers
+# - NO manual UI configuration needed
+#
+# Prerequisites:
+#   - Open WebUI must be running
+#   - open-webui-secrets must have OPENWEBUI_API_KEY
+#   - mcp-servers-config ConfigMap (created by init-mcp-servers-job.yaml)
+#
+# Usage:
+#   kubectl apply -f kubernetes/register-webui-tools-job.yaml
+#
+# Run AFTER:
+#   1. Open WebUI is deployed and running
+#   2. init-mcp-servers-job has completed (optional, but recommended)
+#
+# =============================================================================
+
+---
+# ConfigMap: Registration Script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webui-registration-script
+  namespace: open-webui
+  labels:
+    app: mcp-servers
+    component: webui-registration
+data:
+  register.py: |
+    #!/usr/bin/env python3
+    """
+    Open WebUI Tool Server Registration Script
+    Registers MCP servers from mcp-servers.json via Open WebUI API
+    """
+    import json
+    import os
+    import sys
+    import time
+    import urllib.request
+    import urllib.error
+    from datetime import datetime
+
+    # Configuration
+    OPENWEBUI_URL = os.getenv("OPENWEBUI_URL", "http://open-webui:8080")
+    OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
+    CONFIG_PATH = os.getenv("CONFIG_PATH", "/config/mcp-servers.json")
+    MAX_RETRIES = int(os.getenv("MAX_RETRIES", "60"))
+    RETRY_INTERVAL = int(os.getenv("RETRY_INTERVAL", "5"))
+
+    def log(msg, level="INFO"):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] [{level}] {msg}")
+
+    def make_request(endpoint, method="GET", data=None, timeout=30):
+        url = f"{OPENWEBUI_URL.rstrip('/')}{endpoint}"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if OPENWEBUI_API_KEY:
+            headers["Authorization"] = f"Bearer {OPENWEBUI_API_KEY}"
+
+        body = json.dumps(data).encode("utf-8") if data else None
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else ""
+            raise Exception(f"HTTP {e.code}: {error_body}")
+
+    def wait_for_openwebui():
+        log(f"Waiting for Open WebUI at {OPENWEBUI_URL}...")
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                url = f"{OPENWEBUI_URL.rstrip('/')}/api/config"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        log(f"Open WebUI is ready! (attempt {attempt})")
+                        return True
+            except Exception:
+                pass
+            log(f"  Attempt {attempt}/{MAX_RETRIES}: Not ready...")
+            time.sleep(RETRY_INTERVAL)
+        return False
+
+    def build_openapi_servers(servers):
+        result = []
+        for server in servers:
+            url = server.get("url", "")
+            if "//" in url:
+                parts = url.split("/", 3)
+                if len(parts) >= 4:
+                    base_url = f"{parts[0]}//{parts[2]}"
+                    path = f"/{parts[3]}" if len(parts) > 3 else "/"
+                else:
+                    base_url = url
+                    path = "/"
+            else:
+                base_url = url
+                path = "/"
+
+            result.append({
+                "url": base_url,
+                "path": path,
+                "type": "openapi",
+                "name": server.get("name", server.get("id", "")),
+                "description": server.get("description", ""),
+                "auth_type": "none",
+                "headers": {}
+            })
+        return result
+
+    def main():
+        print("=" * 60)
+        print("Open WebUI Tool Server Registration")
+        print("Single Proxy Auto-Deploy")
+        print("=" * 60)
+
+        if not OPENWEBUI_API_KEY:
+            log("WARNING: OPENWEBUI_API_KEY not set", "WARN")
+
+        if not wait_for_openwebui():
+            log("ERROR: Open WebUI not available", "ERROR")
+            sys.exit(1)
+
+        # Load config
+        log(f"Loading config from {CONFIG_PATH}")
+        with open(CONFIG_PATH) as f:
+            config = json.load(f)
+
+        servers = config.get("servers", [])
+        log(f"Found {len(servers)} servers")
+
+        # Build server configs
+        openapi_servers = build_openapi_servers(servers)
+
+        log("Registering servers:")
+        for s in openapi_servers:
+            log(f"  {s['name']}: {s['url']}{s['path']}")
+
+        # Register
+        try:
+            response = make_request(
+                "/api/v1/configs/tool_servers",
+                "POST",
+                {"openapi_servers": openapi_servers, "mcp_servers": []}
+            )
+            log("Registration successful!", "SUCCESS")
+        except Exception as e:
+            log(f"Registration failed: {e}", "ERROR")
+            sys.exit(1)
+
+        print("=" * 60)
+        print("REGISTRATION COMPLETE!")
+        print("=" * 60)
+
+    if __name__ == "__main__":
+        main()
+
+---
+# Job: Register Tool Servers in Open WebUI
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: register-webui-tools
+  namespace: open-webui
+  labels:
+    app: mcp-servers
+    component: webui-registration
+  annotations:
+    description: "Registers MCP servers in Open WebUI via API - Single Proxy Auto-Deploy"
+spec:
+  ttlSecondsAfterFinished: 600  # Clean up after 10 minutes
+  backoffLimit: 5  # More retries since we wait for Open WebUI
+  template:
+    metadata:
+      labels:
+        app: mcp-servers
+        component: webui-registration
+    spec:
+      restartPolicy: OnFailure
+
+      containers:
+        - name: register
+          image: python:3.11-slim
+          command:
+            - python
+            - /scripts/register.py
+          env:
+            # Open WebUI connection
+            - name: OPENWEBUI_URL
+              value: "http://open-webui:8080"
+
+            # API Key for authentication
+            - name: OPENWEBUI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-secrets
+                  key: OPENWEBUI_API_KEY
+                  optional: true  # May not exist yet
+
+            # Config path
+            - name: CONFIG_PATH
+              value: "/config/mcp-servers.json"
+
+            # Retry configuration (wait up to 5 minutes for Open WebUI)
+            - name: MAX_RETRIES
+              value: "60"
+            - name: RETRY_INTERVAL
+              value: "5"
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+
+      volumes:
+        - name: config
+          configMap:
+            name: mcp-servers-config  # From init-mcp-servers-job.yaml
+        - name: scripts
+          configMap:
+            name: webui-registration-script
+            defaultMode: 0755
+
+---
+# Optional: Run registration after Open WebUI deployment
+# This can be triggered by ArgoCD, Flux, or manual kubectl apply
+#
+# To run manually after Open WebUI is up:
+#   kubectl apply -f register-webui-tools-job.yaml
+#   kubectl logs -f job/register-webui-tools -n open-webui

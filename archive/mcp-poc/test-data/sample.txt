@@ -1,0 +1,7 @@
+Hello from MCP Filesystem Server!
+
+This is a test file for the multi-tenant MCP proof-of-concept.
+The filesystem MCP server should be able to read this file.
+
+Created: 2026-01-06
+Purpose: Testing MCP filesystem operations via mcpo proxy

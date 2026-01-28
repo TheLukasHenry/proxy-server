@@ -90,7 +90,7 @@ async def get_user_groups(email: str) -> List[str]:
             rows = await conn.fetch(
                 """
                 SELECT group_name
-                FROM user_group_membership
+                FROM mcp_proxy.user_group_membership
                 WHERE user_email = $1
                 """,
                 email.lower()
@@ -117,7 +117,7 @@ async def is_user_admin(email: str) -> bool:
             row = await conn.fetchrow(
                 """
                 SELECT is_admin
-                FROM user_admin_status
+                FROM mcp_proxy.user_admin_status
                 WHERE user_email = $1
                 """,
                 email.lower()

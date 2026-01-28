@@ -101,7 +101,7 @@ services:
       # This is Lukas's requirement: configure tools BEFORE Open WebUI starts
       # Format for Open WebUI v0.7.2 with required key and config fields
       # auth_type: "session" sends JWT for user identification
-      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"openapi.json","auth_type":"session","key":"mcp-proxy","config":{},"info":{"id":"mcp-proxy","name":"MCP Proxy","description":"Single proxy for all MCP servers"}}]'
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"openapi.json","auth_type":"session","key":"mcp-proxy","config":{"enable":true},"info":{"id":"mcp-proxy","name":"MCP Proxy","description":"Single proxy for all MCP servers"}}]'
     depends_on:
       redis:
         condition: service_healthy
