@@ -14,14 +14,17 @@ URL Examples:
   POST /github/search_repositories - Execute GitHub tool
   POST /github_search_repositories - Legacy format (still works)
 """
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException, APIRouter
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 import httpx
 import asyncio
 import os
+import re
 from contextlib import asynccontextmanager
 
 from auth import extract_user_from_headers, extract_user_from_headers_optional
@@ -32,12 +35,36 @@ from tenants import (
     user_has_tenant_access_async, get_user_tenants_async,
     user_has_server_access_async, get_user_tenants_configs_async
 )
-from db import get_pool
+from db import (
+    get_pool,
+    get_tenant_api_keys_for_server,
+    get_tenant_api_key,
+    set_tenant_api_key,
+    delete_tenant_api_key,
+    get_all_tenant_keys,
+    get_tenant_keys_by_tenant,
+    get_tenant_endpoint_override,
+    # Admin Portal imports
+    is_openwebui_admin,
+    get_all_users_with_groups,
+    add_user_to_group,
+    remove_user_from_group,
+    get_all_groups_with_servers,
+    get_group_users,
+    create_group,
+    update_group_servers,
+    delete_group,
+    get_all_tenant_endpoints,
+    set_tenant_endpoint_override,
+    delete_tenant_endpoint_override,
+    get_all_available_servers
+)
 from tool_embeddings import (
     store_tool_embeddings,
     search_tools_by_query,
     get_embeddings_stats
 )
+from admin_api import admin_router
 
 
 # Global cache for tools
@@ -210,6 +237,64 @@ Kubernetes cluster on localhost:8080
     lifespan=lifespan,
     openapi_url=None  # Disable auto-generated OpenAPI, we provide our own
 )
+
+# Include admin router FIRST to ensure it has priority over catch-all routes
+app.include_router(admin_router)
+
+# Admin Portal UI - serve static HTML
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/portal", response_class=HTMLResponse, include_in_schema=False)
+async def admin_portal(request: Request):
+    """Serve the Admin Portal UI - ADMIN ONLY.
+
+    Access Control:
+    - Not logged in → Redirect to Open WebUI login
+    - Logged in but not admin → 403 Forbidden
+    - Logged in as admin → Show portal
+    """
+    # Debug: Log received headers from API Gateway
+    x_user_email = request.headers.get("X-User-Email", "")
+    x_user_groups = request.headers.get("X-User-Groups", "")
+    x_user_admin = request.headers.get("X-User-Admin", "")
+    x_gateway = request.headers.get("X-Gateway-Validated", "")
+    print(f"[PORTAL] Headers received: X-User-Email={x_user_email}, X-User-Groups={x_user_groups}, X-User-Admin={x_user_admin}, X-Gateway-Validated={x_gateway}")
+
+    # Extract user from headers (set by API Gateway)
+    user = await extract_user_from_headers_optional(request)
+    print(f"[PORTAL] User extracted: {user}")
+
+    # Not logged in → redirect to login
+    if not user or not user.email:
+        print(f"[PORTAL] No user found, redirecting to login")
+        return RedirectResponse(url="/", status_code=302)
+
+    # Check if user is Open WebUI admin
+    is_admin = await is_openwebui_admin(user.email)
+    if not is_admin:
+        return HTMLResponse(
+            content="""
+            <html>
+            <head><title>Access Denied</title></head>
+            <body style="font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #1a1a2e;">
+                <div style="text-align: center; color: white;">
+                    <h1 style="color: #ff6b6b;">403 - Access Denied</h1>
+                    <p>Admin access required to view this page.</p>
+                    <p style="color: #888;">You are logged in as: {}</p>
+                    <a href="/" style="color: #4ecdc4;">← Back to Open WebUI</a>
+                </div>
+            </body>
+            </html>
+            """.format(user.email),
+            status_code=403
+        )
+
+    # Admin verified → serve portal
+    html_path = STATIC_DIR / "admin.html"
+    if html_path.exists():
+        return FileResponse(html_path, media_type="text/html")
+    return HTMLResponse("<h1>Admin Portal not found</h1><p>static/admin.html is missing</p>", status_code=404)
 
 
 async def generate_dynamic_openapi() -> Dict[str, Any]:
@@ -775,13 +860,18 @@ async def meta_call_tool(body: CallToolRequest, request: Request):
                 detail=f"User {user_email} does not have access to server '{server_id}'"
             )
 
+    # Get user's tenant IDs for API key lookup (US-011)
+    tenant_ids = None
+    if user_email:
+        tenant_ids = await get_user_tenants_async(user_email, entra_groups)
+
     # Execute via existing infrastructure
     server = get_server(server_id)
     if server and server.enabled:
-        return await execute_on_server(server, original_path.strip("/"), body.arguments)
+        return await execute_on_server(server, original_path.strip("/"), body.arguments, tenant_ids)
 
     # Fallback to tenant execution
-    return await execute_tool_on_tenant(server_id, original_path, body.arguments)
+    return await execute_tool_on_tenant(server_id, original_path, body.arguments, tenant_ids)
 
 
 @app.get("/meta/stats")
@@ -989,18 +1079,59 @@ async def fetch_server_tools(server: MCPServerConfig) -> List[Dict]:
     return [{"error": f"Could not fetch tools from {server.server_id}"}]
 
 
-async def execute_on_server(server: MCPServerConfig, tool_path: str, body: dict) -> Any:
-    """Execute a tool on any server based on its tier."""
-    api_key = os.getenv(server.api_key_env, "test-key") if server.api_key_env else "test-key"
+async def execute_on_server(
+    server: MCPServerConfig,
+    tool_path: str,
+    body: dict,
+    tenant_ids: Optional[List[str]] = None
+) -> Any:
+    """
+    Execute a tool on any server based on its tier.
+
+    US-011: Supports tenant-specific API keys AND dynamic endpoint routing.
+    - If the user's tenant has a specific API key, it will be used
+    - If the user's tenant has an endpoint override, requests route to different container
+
+    Args:
+        server: Server configuration
+        tool_path: Path to the tool endpoint
+        body: Request body
+        tenant_ids: User's tenant/group IDs for API key and endpoint lookup
+    """
+    # US-011: Look up tenant-specific API key first, fall back to global env var
+    api_key = None
+    key_source = "default"
+
+    if tenant_ids and server.api_key_env:
+        # Try to get tenant-specific key from database
+        tenant_keys = await get_tenant_api_keys_for_server(tenant_ids, server.server_id)
+        if tenant_keys and server.api_key_env in tenant_keys:
+            api_key = tenant_keys[server.api_key_env]
+            key_source = f"tenant:{tenant_ids[0]}"
+            print(f"  [TENANT-KEY] Using tenant-specific {server.api_key_env} for {server.server_id}")
+
+    # Fall back to global environment variable
+    if not api_key:
+        api_key = os.getenv(server.api_key_env, "test-key") if server.api_key_env else "test-key"
+        key_source = "env"
+
+    # US-011: Dynamic endpoint routing - check for tenant-specific endpoint override
+    endpoint_url = server.endpoint_url
+    if tenant_ids:
+        override_url = await get_tenant_endpoint_override(tenant_ids, server.server_id)
+        if override_url:
+            endpoint_url = override_url
+            print(f"  [DYNAMIC-ROUTING] Routing {server.server_id} to {override_url} for tenant {tenant_ids}")
 
     # Build the full URL
     # For local servers, tool_path might already have leading slash
     clean_path = tool_path.strip("/")
-    url = f"{server.endpoint_url}/{clean_path}"
+    url = f"{endpoint_url}/{clean_path}"
 
     print(f"=== Executing on {server.server_id} ===")
     print(f"  Tier: {server.tier.value}")
     print(f"  URL: {url}")
+    print(f"  Key source: {key_source}")
     print(f"  Body: {body}")
 
     try:
@@ -1032,7 +1163,12 @@ async def execute_on_server(server: MCPServerConfig, tool_path: str, body: dict)
         )
 
 
-async def execute_tool_on_tenant(tenant_id: str, original_path: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def execute_tool_on_tenant(
+    tenant_id: str,
+    original_path: str,
+    arguments: Dict[str, Any],
+    tenant_ids: Optional[List[str]] = None
+) -> Dict[str, Any]:
     """Execute a tool on the tenant's MCP server (supports both old TENANTS and new ALL_SERVERS)."""
     tenant = get_tenant(tenant_id)
 
@@ -1040,8 +1176,18 @@ async def execute_tool_on_tenant(tenant_id: str, original_path: str, arguments: 
     if not tenant:
         server = get_server(tenant_id)
         if server and server.enabled:
-            # Use server config to build the request
-            api_key = os.getenv(server.api_key_env, "test-key") if server.api_key_env else "test-key"
+            # US-011: Look up tenant-specific API key first
+            api_key = None
+            if tenant_ids and server.api_key_env:
+                tenant_keys = await get_tenant_api_keys_for_server(tenant_ids, server.server_id)
+                if tenant_keys and server.api_key_env in tenant_keys:
+                    api_key = tenant_keys[server.api_key_env]
+                    print(f"  [TENANT-KEY] Using tenant-specific key for {server.server_id}")
+
+            # Fall back to global environment variable
+            if not api_key:
+                api_key = os.getenv(server.api_key_env, "test-key") if server.api_key_env else "test-key"
+
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     headers = {
@@ -1103,6 +1249,9 @@ async def execute_tool_on_tenant(tenant_id: str, original_path: str, arguments: 
 # List of known server IDs to distinguish from legacy tool names
 KNOWN_SERVER_IDS = set(ALL_SERVERS.keys())
 
+# Reserved paths that should NOT be treated as server IDs
+RESERVED_PATHS = {"admin", "meta", "health", "servers", "refresh", "tenants", "tools", "debug", "openapi.json", "docs", "redoc", "portal"}
+
 
 @app.get("/{server_id}")
 async def get_server_tools(server_id: str, request: Request):
@@ -1111,6 +1260,10 @@ async def get_server_tools(server_id: str, request: Request):
 
     Example: GET /github -> Returns list of GitHub tools
     """
+    # Skip reserved paths
+    if server_id in RESERVED_PATHS:
+        raise HTTPException(status_code=404, detail=f"Use /{server_id}/* endpoints directly")
+
     # Check if this is a known server
     server = get_server(server_id)
     if not server:
@@ -1163,6 +1316,13 @@ async def execute_server_tool(server_id: str, tool_path: str, request: Request):
         POST /linear/list_issues {"project": "ABC"}
         POST /filesystem/read_file {"path": "/data/file.txt"}
     """
+    # Skip reserved paths (admin routes handled separately)
+    if server_id in RESERVED_PATHS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reserved path '/{server_id}'. This should be handled by another route."
+        )
+
     # Check if this is a known server
     server = get_server(server_id)
     if not server:
@@ -1229,8 +1389,21 @@ async def execute_server_tool(server_id: str, tool_path: str, request: Request):
         body = body["arguments"]
         print(f"  Unwrapped body: {body}")
 
+    # Get user's groups for dynamic routing and API key lookup (US-011)
+    # We need GROUP names (like 'MCP-GitHub') not tenant/server IDs (like 'github')
+    user_groups = None
+    if user:
+        # First use groups from auth (entra_groups), then fall back to database lookup
+        if user.entra_groups:
+            user_groups = user.entra_groups
+        else:
+            # Look up groups from database
+            from db import get_user_groups
+            user_groups = await get_user_groups(user.email)
+        print(f"  [ROUTING] User {user.email} groups for routing: {user_groups}")
+
     # Execute based on server tier
-    return await execute_on_server(server, tool_path, body)
+    return await execute_on_server(server, tool_path, body, user_groups)
 
 
 # =============================================================================
@@ -1288,6 +1461,11 @@ async def execute_tool_endpoint_legacy(tool_name: str, request: Request):
     except:
         body = {}
 
+    # Get user's tenant IDs for API key lookup (US-011)
+    tenant_ids = None
+    if user:
+        tenant_ids = await get_user_tenants_async(user.email, user.entra_groups if user else None)
+
     # Execute the tool
-    result = await execute_tool_on_tenant(tenant_id, original_path, body)
+    result = await execute_tool_on_tenant(tenant_id, original_path, body, tenant_ids)
     return result

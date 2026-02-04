@@ -126,6 +126,37 @@ INSERT INTO mcp_proxy.group_tenant_mapping (group_name, tenant_id) VALUES
 ON CONFLICT (group_name, tenant_id) DO NOTHING;
 
 -- =============================================================================
+-- TENANT-SPECIFIC API KEYS (US-011: Data Isolation)
+-- =============================================================================
+-- Stores per-tenant API keys for MCP servers.
+-- Example: Tenant-Google can have their own GITHUB_TOKEN for GitHub server
+-- This enables data isolation - each company uses their own credentials.
+--
+-- Flow:
+--   1. User belongs to group "Tenant-Google"
+--   2. User calls /github/search_repositories
+--   3. Proxy looks up tenant_server_keys for (Tenant-Google, github)
+--   4. If found, uses tenant's GITHUB_TOKEN; else uses global env var
+
+CREATE TABLE IF NOT EXISTS mcp_proxy.tenant_server_keys (
+    tenant_id VARCHAR(255) NOT NULL,      -- Group name (e.g., "Tenant-Google")
+    server_id VARCHAR(255) NOT NULL,      -- Server ID (e.g., "github", "linear")
+    key_name VARCHAR(255) NOT NULL,       -- Env var name (e.g., "GITHUB_TOKEN")
+    key_value TEXT NOT NULL,              -- The actual API key (encrypted at rest)
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, server_id, key_name)
+);
+
+-- Index for quick lookups by tenant
+CREATE INDEX IF NOT EXISTS idx_tenant_server_keys_tenant
+    ON mcp_proxy.tenant_server_keys (tenant_id);
+
+-- Index for quick lookups by server
+CREATE INDEX IF NOT EXISTS idx_tenant_server_keys_server
+    ON mcp_proxy.tenant_server_keys (server_id);
+
+-- =============================================================================
 -- TOOL EMBEDDINGS (for Speakeasy meta-tools semantic search)
 -- =============================================================================
 -- Stores vector embeddings of tool names/descriptions for pgvector similarity search.
@@ -174,6 +205,57 @@ LEFT JOIN mcp_proxy.user_group_membership ugm ON g.group_name = ugm.group_name
 LEFT JOIN mcp_proxy.group_tenant_mapping gtm ON g.group_name = gtm.group_name
 GROUP BY g.group_name
 ORDER BY g.group_name;
+
+-- =============================================================================
+-- TENANT ENDPOINT OVERRIDES (Dynamic Routing)
+-- =============================================================================
+-- Allows tenants to route requests to different MCP server containers.
+-- Example: Tenant-Google routes 'github' to their own mcp-github-tenant:8000
+
+CREATE TABLE IF NOT EXISTS mcp_proxy.tenant_endpoint_overrides (
+    tenant_id VARCHAR(255) NOT NULL,      -- Group name (e.g., "Tenant-Google")
+    server_id VARCHAR(255) NOT NULL,      -- Server ID (e.g., "github")
+    endpoint_url TEXT NOT NULL,           -- Override URL (e.g., "http://mcp-github-tenant:8000")
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, server_id)
+);
+
+-- Index for quick lookups by tenant
+CREATE INDEX IF NOT EXISTS idx_tenant_endpoint_overrides_tenant
+    ON mcp_proxy.tenant_endpoint_overrides (tenant_id);
+
+-- =============================================================================
+-- API ANALYTICS (Gateway Logging)
+-- =============================================================================
+-- Logs all API requests for analytics and monitoring.
+-- Populated by the API Gateway service.
+
+CREATE TABLE IF NOT EXISTS mcp_proxy.api_analytics (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    user_email VARCHAR(255),
+    method VARCHAR(10),
+    endpoint VARCHAR(512),
+    status_code INT,
+    response_time_ms INT,
+    user_agent TEXT,
+    client_ip VARCHAR(45)
+);
+
+-- Indexes for analytics queries
+CREATE INDEX IF NOT EXISTS idx_api_analytics_timestamp
+    ON mcp_proxy.api_analytics (timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_analytics_user
+    ON mcp_proxy.api_analytics (user_email);
+
+CREATE INDEX IF NOT EXISTS idx_api_analytics_endpoint
+    ON mcp_proxy.api_analytics (endpoint);
+
+-- Partition by month (optional - for high-volume deployments)
+-- This is commented out as it requires PostgreSQL 11+
+-- CREATE TABLE mcp_proxy.api_analytics_2026_01 PARTITION OF mcp_proxy.api_analytics
+--     FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
 
 -- =============================================================================
 -- DONE

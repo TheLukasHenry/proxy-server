@@ -1,0 +1,129 @@
+# =============================================================================
+# Caddyfile - Reverse Proxy for MCP Proxy Stack
+# =============================================================================
+#
+# Routes all traffic through the API Gateway for centralized authentication
+# and rate limiting.
+#
+# Architecture:
+#   Browser -> Caddy -> API Gateway -> Backend Services
+#
+# =============================================================================
+
+{
+	# Disable admin API (not needed for this use case)
+	admin off
+
+	# Enable debug logging (set to warn in production)
+	log {
+		level INFO
+	}
+}
+
+# =============================================================================
+# HTTP Server (Port 80)
+# =============================================================================
+# For local development. In production, use HTTPS with automatic certs.
+
+:80 {
+	# Log all requests
+	log {
+		output stdout
+		format console
+	}
+
+	# ---------------------------------------------------------------------------
+	# Health check endpoints (bypass gateway)
+	# ---------------------------------------------------------------------------
+	handle /health {
+		respond "OK" 200
+	}
+
+	handle /caddy/health {
+		respond "Caddy OK" 200
+	}
+
+	# ---------------------------------------------------------------------------
+	# Gateway health (direct to gateway)
+	# ---------------------------------------------------------------------------
+	handle /gateway/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# MCP Proxy routes (through gateway)
+	# ---------------------------------------------------------------------------
+	# All MCP endpoints require authentication
+	handle /mcp/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	handle /servers* {
+		uri replace /servers /mcp/servers
+		reverse_proxy api-gateway:8080
+	}
+
+	handle /meta/* {
+		uri replace /meta /mcp/meta
+		reverse_proxy api-gateway:8080
+	}
+
+	handle /openapi.json {
+		uri replace /openapi.json /mcp/openapi.json
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# Admin Portal routes (through gateway)
+	# ---------------------------------------------------------------------------
+	# /mcp-admin is the single admin portal URL
+	handle /mcp-admin {
+		reverse_proxy api-gateway:8080
+	}
+
+	handle /mcp-admin/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	handle /admin/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	# /portal redirects to /mcp-admin (handled by API Gateway)
+	handle /portal* {
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# Open WebUI (default, through gateway for auth)
+	# ---------------------------------------------------------------------------
+	handle /* {
+		reverse_proxy api-gateway:8080
+	}
+}
+
+# =============================================================================
+# HTTPS Server (Port 443) - For Production
+# =============================================================================
+# Uncomment and configure for production deployment with automatic HTTPS.
+#
+# app.example.com {
+# 	# Automatic HTTPS via Let's Encrypt
+#
+# 	# Same routing as above
+# 	handle /gateway/* {
+# 		reverse_proxy api-gateway:8080
+# 	}
+#
+# 	handle /mcp/* {
+# 		reverse_proxy api-gateway:8080
+# 	}
+#
+# 	handle /admin/* {
+# 		reverse_proxy api-gateway:8080
+# 	}
+#
+# 	handle /* {
+# 		reverse_proxy api-gateway:8080
+# 	}
+# }

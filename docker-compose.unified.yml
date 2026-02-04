@@ -1,0 +1,382 @@
+# =============================================================================
+# MCP Proxy - Unified Deployment with API Gateway
+# =============================================================================
+#
+# Complete stack with centralized authentication and rate limiting.
+#
+# Architecture:
+#   Browser -> Caddy (port 80) -> API Gateway -> Backend Services
+#
+# Services:
+#   - caddy: Reverse proxy and TLS termination
+#   - api-gateway: JWT validation, rate limiting, user header injection
+#   - mcp-proxy: MCP tool orchestration (API_GATEWAY_MODE=true)
+#   - open-webui: AI chat interface
+#   - admin-portal: User/group management UI
+#   - postgres: Database
+#   - redis: Sessions and cache
+#   - MCP servers: Tool containers
+#
+# Usage:
+#   docker compose -f docker-compose.unified.yml up -d
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # CADDY - Reverse Proxy
+  # ===========================================================================
+  # Entry point for all traffic. Routes to API Gateway.
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api-gateway
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # API GATEWAY - Centralized Auth & Rate Limiting
+  # ===========================================================================
+  # Validates JWTs, looks up user groups, applies rate limits, forwards headers.
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    ports:
+      - "8085:8080"
+    restart: unless-stopped
+    environment:
+      # JWT validation (same key as Open WebUI)
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # Database for group lookups and analytics
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # Rate limiting
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_PER_MINUTE=100
+      - RATE_LIMIT_PER_IP=1000
+      # Analytics logging
+      - ENABLE_API_ANALYTICS=true
+      # Backend service URLs
+      - MCP_PROXY_URL=http://mcp-proxy:8000
+      - ADMIN_PORTAL_URL=http://admin-portal:8080
+      - OPEN_WEBUI_URL=http://open-webui:8080
+      # Debug mode
+      - DEBUG=${DEBUG:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/gateway/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # MCP PROXY - Multi-Tenant Tool Gateway
+  # ===========================================================================
+  # Tool orchestration with multi-tenant filtering.
+  # API_GATEWAY_MODE=true: Trusts headers from API Gateway.
+  mcp-proxy:
+    build: ./mcp-proxy
+    container_name: mcp-proxy
+    restart: unless-stopped
+    environment:
+      - DEBUG=${DEBUG:-false}
+      # =======================================================================
+      # API GATEWAY MODE - Trust headers from gateway
+      # =======================================================================
+      - API_GATEWAY_MODE=true
+      - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups,X-User-Admin
+      # Database for permission lookups
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # MCP Server URLs (Docker internal network)
+      - MCP_FILESYSTEM_URL=http://mcp-filesystem:8001
+      - MCP_GITHUB_URL=http://mcp-github:8000
+      - MCP_CLICKUP_URL=http://mcp-clickup:8000
+      - MCP_TRELLO_URL=http://mcp-trello:8000
+      - MCP_SONARQUBE_URL=http://mcp-sonarqube:8000
+      - MCP_EXCEL_URL=http://mcp-excel:8000
+      - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
+      # API Keys
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN:-}
+      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
+      - SONARQUBE_URL=${SONARQUBE_URL:-}
+      # Meta-tools mode
+      - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
+      # Skip cache refresh on startup (faster boot)
+      - SKIP_CACHE_REFRESH=${SKIP_CACHE_REFRESH:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # OPEN WEBUI - AI Chat Interface
+  # ===========================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # LLM Connections
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - ENABLE_OLLAMA_API=${ENABLE_OLLAMA_API:-false}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
+      # Database
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - VECTOR_DB=pgvector
+      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_REDIS=true
+      # Microsoft OAuth
+      - ENABLE_OAUTH_SIGNUP=true
+      - ENABLE_LOGIN_FORM=true
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
+      - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_CLIENT_TENANT_ID:-}
+      - MICROSOFT_REDIRECT_URI=${WEBUI_URL:-http://localhost}/oauth/microsoft/callback
+      - OPENID_PROVIDER_URL=${OPENID_PROVIDER_URL:-}
+      - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      - WEBUI_URL=${WEBUI_URL:-http://localhost}
+      # Group Management
+      - ENABLE_OAUTH_GROUP_MANAGEMENT=true
+      - ENABLE_OAUTH_GROUP_CREATION=true
+      - OAUTH_GROUP_CLAIM=groups
+      # Role Management
+      - ENABLE_OAUTH_ROLE_MANAGEMENT=true
+      - OAUTH_ADMIN_ROLES=MCP-Admin
+      # Workspaces
+      - ENABLE_WORKSPACE=true
+      # User headers (forwarded by gateway)
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - BYPASS_MODEL_ACCESS_CONTROL=true
+      # =======================================================================
+      # MCP Proxy Connection
+      # =======================================================================
+      # Use "session" auth_type so Open WebUI sends JWT to MCP Proxy
+      # The gateway will validate it and forward user headers
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"openapi","url":"http://mcp-proxy:8000","path":"/openapi.json","auth_type":"session","key":"mcp-proxy","config":{"enable":true},"info":{"id":"mcp-proxy","name":"MCP Proxy","description":"Single proxy for all MCP servers"}}]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ===========================================================================
+  # ADMIN PORTAL - User/Group Management
+  # ===========================================================================
+  admin-portal:
+    build: ./admin-portal
+    container_name: admin-portal
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - SECRET_KEY=${WEBUI_SECRET_KEY}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-admin@example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ===========================================================================
+  # POSTGRESQL - Database
+  # ===========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=openwebui
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ===========================================================================
+  # REDIS - Sessions & Cache
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ===========================================================================
+  # MCP SERVERS - Tool Containers
+  # ===========================================================================
+
+  # Filesystem - File access tools (14 tools)
+  mcp-filesystem:
+    image: node:20-slim
+    container_name: mcp-filesystem
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8001 --api-key $${MCP_API_KEY} -- npx -y @modelcontextprotocol/server-filesystem /data"
+    environment:
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    volumes:
+      - ./mcp-data:/data
+    networks:
+      - backend
+
+  # GitHub - Repository tools (26 tools)
+  mcp-github:
+    build: ./mcp-servers/github
+    container_name: mcp-github
+    restart: unless-stopped
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+  # ClickUp - Task management (177+ tools)
+  mcp-clickup:
+    image: node:20-slim
+    container_name: mcp-clickup
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @chykalophia/clickup-mcp-server"
+    environment:
+      - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+  # Trello - Kanban boards
+  mcp-trello:
+    image: node:20-slim
+    container_name: mcp-trello
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y mcp-server-trello"
+    environment:
+      - TRELLO_API_KEY=${TRELLO_API_KEY}
+      - TRELLO_TOKEN=${TRELLO_API_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+  # SonarQube - Code quality analysis
+  mcp-sonarqube:
+    image: node:20-slim
+    container_name: mcp-sonarqube
+    restart: unless-stopped
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @wallacewen/sonarqube-mcp-server"
+    environment:
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
+      - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+  # Excel Creator - Spreadsheet generation
+  mcp-excel:
+    build: ./mcp-servers/excel-creator
+    container_name: mcp-excel
+    restart: unless-stopped
+    networks:
+      - backend
+
+  # Dashboard - Executive dashboard generation
+  mcp-dashboard:
+    build: ./mcp-servers/dashboard
+    container_name: mcp-dashboard
+    restart: unless-stopped
+    networks:
+      - backend
+
+  # ===========================================================================
+  # DATABASE INIT - Seed data from mcp-servers.json
+  # ===========================================================================
+  db-init:
+    build: ./mcp-proxy
+    container_name: db-init
+    command: ["python", "/app/scripts/seed_mcp_servers.py", "--clear"]
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - backend
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  redis-data:
+  open-webui-data:

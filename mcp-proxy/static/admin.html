@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Admin Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+        .badge { @apply px-2 py-1 text-xs rounded-full font-medium; }
+        .badge-admin { @apply bg-red-100 text-red-800; }
+        .badge-github { @apply bg-purple-100 text-purple-800; }
+        .badge-filesystem { @apply bg-blue-100 text-blue-800; }
+        .badge-default { @apply bg-gray-100 text-gray-800; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="adminPortal()">
+    <!-- Toast Notification -->
+    <div x-show="toast.show" x-cloak
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 transform translate-y-2"
+         x-transition:enter-end="opacity-100 transform translate-y-0"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         :class="toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'"
+         class="fixed top-4 right-4 text-white px-6 py-3 rounded-lg shadow-lg z-50">
+        <span x-text="toast.message"></span>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-white shadow">
+        <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                    <svg class="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    <h1 class="ml-3 text-2xl font-bold text-gray-900">MCP Admin Portal</h1>
+                </div>
+                <div class="text-sm text-gray-500">
+                    Multi-Tenant Management
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+        <!-- Tabs -->
+        <div class="border-b border-gray-200 mb-6">
+            <nav class="flex space-x-8">
+                <button @click="activeTab = 'users'"
+                        :class="activeTab === 'users' ? 'tab-active' : 'text-gray-500 hover:text-gray-700'"
+                        class="py-4 px-1 font-medium text-sm">
+                    Users & Groups
+                </button>
+                <button @click="activeTab = 'groups'"
+                        :class="activeTab === 'groups' ? 'tab-active' : 'text-gray-500 hover:text-gray-700'"
+                        class="py-4 px-1 font-medium text-sm">
+                    Groups & Servers
+                </button>
+                <button @click="activeTab = 'keys'"
+                        :class="activeTab === 'keys' ? 'tab-active' : 'text-gray-500 hover:text-gray-700'"
+                        class="py-4 px-1 font-medium text-sm">
+                    API Keys
+                </button>
+                <button @click="activeTab = 'routing'"
+                        :class="activeTab === 'routing' ? 'tab-active' : 'text-gray-500 hover:text-gray-700'"
+                        class="py-4 px-1 font-medium text-sm">
+                    Dynamic Routing
+                </button>
+            </nav>
+        </div>
+
+        <!-- Users & Groups Tab -->
+        <div x-show="activeTab === 'users'" x-cloak>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">Users & Group Memberships</h2>
+                <button @click="openAddUserModal()"
+                        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                    </svg>
+                    Add User to Group
+                </button>
+            </div>
+
+            <!-- Search -->
+            <div class="mb-4">
+                <input type="text" x-model="userSearch" placeholder="Search by email..."
+                       class="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
+            <!-- Users Table -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Groups</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="user in filteredUsers" :key="user.email">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm font-medium text-gray-900" x-text="user.email"></div>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="flex flex-wrap gap-2">
+                                        <template x-for="group in user.groups" :key="group">
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                                  :class="getGroupBadgeClass(group)">
+                                                <span x-text="group"></span>
+                                                <button @click="removeUserFromGroup(user.email, group)"
+                                                        class="ml-1 text-current hover:text-red-600">
+                                                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                                                    </svg>
+                                                </button>
+                                            </span>
+                                        </template>
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                    <button @click="openAddUserModal(user.email)" class="text-blue-600 hover:text-blue-800">
+                                        Add Group
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <div x-show="filteredUsers.length === 0" class="text-center py-8 text-gray-500">
+                    No users found
+                </div>
+            </div>
+        </div>
+
+        <!-- Groups & Servers Tab -->
+        <div x-show="activeTab === 'groups'" x-cloak>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">Groups & Server Access</h2>
+                <button @click="openCreateGroupModal()"
+                        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                    </svg>
+                    Create Group
+                </button>
+            </div>
+
+            <!-- Groups Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="group in groups" :key="group.group_name">
+                    <div class="bg-white rounded-lg shadow p-4">
+                        <div class="flex justify-between items-start mb-3">
+                            <h3 class="font-semibold text-gray-900" x-text="group.group_name"></h3>
+                            <div class="flex space-x-2">
+                                <button @click="openEditGroupModal(group)" class="text-gray-400 hover:text-blue-600">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                    </svg>
+                                </button>
+                                <button @click="deleteGroup(group.group_name)"
+                                        x-show="group.group_name !== 'MCP-Admin'"
+                                        class="text-gray-400 hover:text-red-600">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="text-sm text-gray-500 mb-2">
+                            <span x-text="group.user_count"></span> users
+                        </div>
+                        <div class="flex flex-wrap gap-1">
+                            <template x-for="server in group.servers.slice(0, 5)" :key="server">
+                                <span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded" x-text="server"></span>
+                            </template>
+                            <span x-show="group.servers.length > 5" class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded"
+                                  x-text="'+' + (group.servers.length - 5) + ' more'"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- API Keys Tab -->
+        <div x-show="activeTab === 'keys'" x-cloak>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">Tenant API Keys</h2>
+                <button @click="openAddKeyModal()"
+                        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                    </svg>
+                    Add API Key
+                </button>
+            </div>
+
+            <!-- Keys Table -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Server</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Key Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="key in tenantKeys" :key="key.tenant_id + key.server_id + key.key_name">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="key.tenant_id"></td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="key.server_id"></td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-500" x-text="key.key_name"></td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">Configured</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                    <button @click="deleteKey(key)" class="text-red-600 hover:text-red-800">Delete</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <div x-show="tenantKeys.length === 0" class="text-center py-8 text-gray-500">
+                    No tenant API keys configured
+                </div>
+            </div>
+        </div>
+
+        <!-- Dynamic Routing Tab -->
+        <div x-show="activeTab === 'routing'" x-cloak>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">Dynamic Routing (Endpoint Overrides)</h2>
+                <button @click="openAddEndpointModal()"
+                        class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                    </svg>
+                    Add Override
+                </button>
+            </div>
+
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <p class="text-sm text-blue-800">
+                    <strong>Dynamic Routing</strong> allows different tenants to use different backend containers for the same server.
+                    For example, MCP-GitHub group can route to a different GitHub container with their own API credentials.
+                </p>
+            </div>
+
+            <!-- Endpoints Table -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenant/Group</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Server</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Custom Endpoint</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="endpoint in endpoints" :key="endpoint.tenant_id + endpoint.server_id">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="endpoint.tenant_id"></td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="endpoint.server_id"></td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-blue-600" x-text="endpoint.endpoint_url"></td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                    <button @click="deleteEndpoint(endpoint)" class="text-red-600 hover:text-red-800">Delete</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <div x-show="endpoints.length === 0" class="text-center py-8 text-gray-500">
+                    No endpoint overrides configured
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Add User to Group Modal -->
+    <div x-show="modals.addUser" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-black opacity-30" @click="modals.addUser = false"></div>
+            <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                <h3 class="text-lg font-semibold mb-4">Add User to Group</h3>
+                <form @submit.prevent="addUserToGroup()">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" x-model="forms.addUser.email" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                               placeholder="user@example.com">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Group</label>
+                        <select x-model="forms.addUser.group" required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select a group...</option>
+                            <template x-for="group in groups" :key="group.group_name">
+                                <option :value="group.group_name" x-text="group.group_name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="modals.addUser = false"
+                                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
+                        <button type="submit"
+                                class="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700">Add</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Group Modal -->
+    <div x-show="modals.createGroup" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-black opacity-30" @click="modals.createGroup = false"></div>
+            <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                <h3 class="text-lg font-semibold mb-4">Create New Group</h3>
+                <form @submit.prevent="createGroup()">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Group Name</label>
+                        <input type="text" x-model="forms.createGroup.name" required
+                               pattern="[A-Za-z0-9-]+"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                               placeholder="MCP-NewTeam">
+                        <p class="text-xs text-gray-500 mt-1">Only letters, numbers, and hyphens allowed</p>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Server Access</label>
+                        <div class="max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                            <template x-for="server in servers" :key="server.id">
+                                <label class="flex items-center py-1">
+                                    <input type="checkbox" :value="server.id" x-model="forms.createGroup.servers"
+                                           class="rounded text-blue-600 focus:ring-blue-500">
+                                    <span class="ml-2 text-sm" x-text="server.name + ' (' + server.id + ')'"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="modals.createGroup = false"
+                                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
+                        <button type="submit"
+                                class="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Group Modal -->
+    <div x-show="modals.editGroup" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-black opacity-30" @click="modals.editGroup = false"></div>
+            <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                <h3 class="text-lg font-semibold mb-4">Edit Group: <span x-text="forms.editGroup.name"></span></h3>
+                <form @submit.prevent="updateGroup()">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Server Access</label>
+                        <div class="max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                            <template x-for="server in servers" :key="server.id">
+                                <label class="flex items-center py-1">
+                                    <input type="checkbox" :value="server.id" x-model="forms.editGroup.servers"
+                                           class="rounded text-blue-600 focus:ring-blue-500">
+                                    <span class="ml-2 text-sm" x-text="server.name + ' (' + server.id + ')'"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="modals.editGroup = false"
+                                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
+                        <button type="submit"
+                                class="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add API Key Modal -->
+    <div x-show="modals.addKey" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-black opacity-30" @click="modals.addKey = false"></div>
+            <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                <h3 class="text-lg font-semibold mb-4">Add Tenant API Key</h3>
+                <form @submit.prevent="addKey()">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tenant/Group</label>
+                        <select x-model="forms.addKey.tenant" required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select a group...</option>
+                            <template x-for="group in groups" :key="group.group_name">
+                                <option :value="group.group_name" x-text="group.group_name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Server</label>
+                        <select x-model="forms.addKey.server" required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select a server...</option>
+                            <template x-for="server in servers" :key="server.id">
+                                <option :value="server.id" x-text="server.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Key Name</label>
+                        <input type="text" x-model="forms.addKey.keyName" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                               placeholder="GITHUB_TOKEN">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Key Value</label>
+                        <input type="password" x-model="forms.addKey.keyValue" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                               placeholder="ghp_...">
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="modals.addKey = false"
+                                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
+                        <button type="submit"
+                                class="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700">Add</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Endpoint Override Modal -->
+    <div x-show="modals.addEndpoint" x-cloak class="fixed inset-0 z-50 overflow-y-auto">
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="fixed inset-0 bg-black opacity-30" @click="modals.addEndpoint = false"></div>
+            <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                <h3 class="text-lg font-semibold mb-4">Add Endpoint Override</h3>
+                <form @submit.prevent="addEndpoint()">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tenant/Group</label>
+                        <select x-model="forms.addEndpoint.tenant" required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select a group...</option>
+                            <template x-for="group in groups" :key="group.group_name">
+                                <option :value="group.group_name" x-text="group.group_name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Server</label>
+                        <select x-model="forms.addEndpoint.server" required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select a server...</option>
+                            <template x-for="server in servers" :key="server.id">
+                                <option :value="server.id" x-text="server.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Endpoint URL</label>
+                        <input type="url" x-model="forms.addEndpoint.url" required
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                               placeholder="http://mcp-github-tenant:8000">
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="modals.addEndpoint = false"
+                                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
+                        <button type="submit"
+                                class="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700">Add</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function adminPortal() {
+            return {
+                activeTab: 'users',
+                userSearch: '',
+
+                // Data
+                users: [],
+                groups: [],
+                servers: [],
+                tenantKeys: [],
+                endpoints: [],
+
+                // Toast
+                toast: {
+                    show: false,
+                    message: '',
+                    type: 'success'
+                },
+
+                // Modals
+                modals: {
+                    addUser: false,
+                    createGroup: false,
+                    editGroup: false,
+                    addKey: false,
+                    addEndpoint: false
+                },
+
+                // Forms
+                forms: {
+                    addUser: { email: '', group: '' },
+                    createGroup: { name: '', servers: [] },
+                    editGroup: { name: '', servers: [] },
+                    addKey: { tenant: '', server: '', keyName: '', keyValue: '' },
+                    addEndpoint: { tenant: '', server: '', url: '' }
+                },
+
+                // Computed
+                get filteredUsers() {
+                    if (!this.userSearch) return this.users;
+                    const search = this.userSearch.toLowerCase();
+                    return this.users.filter(u => u.email.toLowerCase().includes(search));
+                },
+
+                // Initialize
+                async init() {
+                    await this.loadAll();
+                },
+
+                async loadAll() {
+                    await Promise.all([
+                        this.loadUsers(),
+                        this.loadGroups(),
+                        this.loadServers(),
+                        this.loadKeys(),
+                        this.loadEndpoints()
+                    ]);
+                },
+
+                // API Calls
+                async api(endpoint, method = 'GET', body = null) {
+                    // Get JWT token from Open WebUI's localStorage
+                    const token = localStorage.getItem('token');
+
+                    const options = {
+                        method,
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'include'  // Include cookies
+                    };
+
+                    // Add Authorization header if token exists
+                    if (token) {
+                        options.headers['Authorization'] = `Bearer ${token}`;
+                    }
+
+                    if (body) options.body = JSON.stringify(body);
+
+                    const response = await fetch(`/admin${endpoint}`, options);
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Request failed');
+                    }
+                    return response.json();
+                },
+
+                async loadUsers() {
+                    try {
+                        const data = await this.api('/users');
+                        this.users = data.users || [];
+                    } catch (e) {
+                        console.error('Failed to load users:', e);
+                    }
+                },
+
+                async loadGroups() {
+                    try {
+                        const data = await this.api('/groups');
+                        this.groups = data.groups || [];
+                    } catch (e) {
+                        console.error('Failed to load groups:', e);
+                    }
+                },
+
+                async loadServers() {
+                    try {
+                        const data = await this.api('/servers');
+                        this.servers = data.servers || [];
+                    } catch (e) {
+                        console.error('Failed to load servers:', e);
+                    }
+                },
+
+                async loadKeys() {
+                    try {
+                        const data = await this.api('/tenant-keys');
+                        this.tenantKeys = data.keys || [];
+                    } catch (e) {
+                        console.error('Failed to load keys:', e);
+                    }
+                },
+
+                async loadEndpoints() {
+                    try {
+                        const data = await this.api('/endpoints');
+                        this.endpoints = data.endpoints || [];
+                    } catch (e) {
+                        console.error('Failed to load endpoints:', e);
+                    }
+                },
+
+                // User Actions
+                openAddUserModal(email = '') {
+                    this.forms.addUser = { email, group: '' };
+                    this.modals.addUser = true;
+                },
+
+                async addUserToGroup() {
+                    try {
+                        await this.api('/users/groups', 'POST', {
+                            email: this.forms.addUser.email,
+                            group_name: this.forms.addUser.group
+                        });
+                        this.showToast('User added to group', 'success');
+                        this.modals.addUser = false;
+                        await this.loadUsers();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                async removeUserFromGroup(email, group) {
+                    if (!confirm(`Remove ${email} from ${group}?`)) return;
+                    try {
+                        await this.api('/users/groups', 'DELETE', {
+                            email: email,
+                            group_name: group
+                        });
+                        this.showToast('User removed from group', 'success');
+                        await this.loadUsers();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                // Group Actions
+                openCreateGroupModal() {
+                    this.forms.createGroup = { name: '', servers: [] };
+                    this.modals.createGroup = true;
+                },
+
+                openEditGroupModal(group) {
+                    this.forms.editGroup = {
+                        name: group.group_name,
+                        servers: [...group.servers]
+                    };
+                    this.modals.editGroup = true;
+                },
+
+                async createGroup() {
+                    try {
+                        await this.api('/groups', 'POST', {
+                            group_name: this.forms.createGroup.name,
+                            server_ids: this.forms.createGroup.servers
+                        });
+                        this.showToast('Group created', 'success');
+                        this.modals.createGroup = false;
+                        await this.loadGroups();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                async updateGroup() {
+                    try {
+                        await this.api(`/groups/${this.forms.editGroup.name}`, 'PUT', {
+                            server_ids: this.forms.editGroup.servers
+                        });
+                        this.showToast('Group updated', 'success');
+                        this.modals.editGroup = false;
+                        await this.loadGroups();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                async deleteGroup(name) {
+                    if (!confirm(`Delete group "${name}"? This will remove all users from this group.`)) return;
+                    try {
+                        await this.api(`/groups/${name}`, 'DELETE');
+                        this.showToast('Group deleted', 'success');
+                        await this.loadGroups();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                // Key Actions
+                openAddKeyModal() {
+                    this.forms.addKey = { tenant: '', server: '', keyName: '', keyValue: '' };
+                    this.modals.addKey = true;
+                },
+
+                async addKey() {
+                    try {
+                        await this.api('/tenant-keys', 'POST', {
+                            tenant_id: this.forms.addKey.tenant,
+                            server_id: this.forms.addKey.server,
+                            key_name: this.forms.addKey.keyName,
+                            key_value: this.forms.addKey.keyValue
+                        });
+                        this.showToast('API key added', 'success');
+                        this.modals.addKey = false;
+                        await this.loadKeys();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                async deleteKey(key) {
+                    if (!confirm(`Delete API key "${key.key_name}" for ${key.tenant_id}?`)) return;
+                    try {
+                        await this.api('/tenant-keys', 'DELETE', {
+                            tenant_id: key.tenant_id,
+                            server_id: key.server_id,
+                            key_name: key.key_name
+                        });
+                        this.showToast('API key deleted', 'success');
+                        await this.loadKeys();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                // Endpoint Actions
+                openAddEndpointModal() {
+                    this.forms.addEndpoint = { tenant: '', server: '', url: '' };
+                    this.modals.addEndpoint = true;
+                },
+
+                async addEndpoint() {
+                    try {
+                        await this.api('/endpoints', 'POST', {
+                            tenant_id: this.forms.addEndpoint.tenant,
+                            server_id: this.forms.addEndpoint.server,
+                            endpoint_url: this.forms.addEndpoint.url
+                        });
+                        this.showToast('Endpoint override added', 'success');
+                        this.modals.addEndpoint = false;
+                        await this.loadEndpoints();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                async deleteEndpoint(endpoint) {
+                    if (!confirm(`Delete endpoint override for ${endpoint.tenant_id}?`)) return;
+                    try {
+                        await this.api('/endpoints', 'DELETE', {
+                            tenant_id: endpoint.tenant_id,
+                            server_id: endpoint.server_id
+                        });
+                        this.showToast('Endpoint override deleted', 'success');
+                        await this.loadEndpoints();
+                    } catch (e) {
+                        this.showToast(e.message, 'error');
+                    }
+                },
+
+                // Helpers
+                showToast(message, type = 'success') {
+                    this.toast = { show: true, message, type };
+                    setTimeout(() => this.toast.show = false, 3000);
+                },
+
+                getGroupBadgeClass(group) {
+                    if (group.includes('Admin')) return 'bg-red-100 text-red-800';
+                    if (group.includes('GitHub')) return 'bg-purple-100 text-purple-800';
+                    if (group.includes('Filesystem')) return 'bg-blue-100 text-blue-800';
+                    if (group.includes('Tenant-')) return 'bg-green-100 text-green-800';
+                    return 'bg-gray-100 text-gray-800';
+                }
+            }
+        }
+    </script>
+</body>
+</html>
