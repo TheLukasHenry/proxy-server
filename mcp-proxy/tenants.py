@@ -570,6 +570,7 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
 # These run as containers in the Kubernetes cluster
 MCP_EXCEL_URL = os.getenv("MCP_EXCEL_URL", "http://mcp-excel:8000")
 MCP_DASHBOARD_URL = os.getenv("MCP_DASHBOARD_URL", "http://mcp-dashboard:8000")
+MCP_GITHUB_JACINTALAMA_URL = os.getenv("MCP_GITHUB_JACINTALAMA_URL", "http://mcp-github-jacintalama:8000")
 
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     "github": MCPServerConfig(
@@ -581,6 +582,17 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         api_key_env="MCP_API_KEY",  # mcp-github uses MCP_API_KEY for internal auth
         description="GitHub repositories, issues, PRs (26 tools)",
         enabled=bool(os.getenv("GITHUB_TOKEN"))  # Requires valid PAT to function
+    ),
+    # US-011: Tenant-specific GitHub container for data isolation
+    "github-jacintalama": MCPServerConfig(
+        server_id="github-jacintalama",
+        display_name="GitHub (Jacintalama)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_GITHUB_JACINTALAMA_URL,
+        auth_type="bearer",
+        api_key_env="MCP_API_KEY",
+        description="GitHub for Jacintalama tenant - data isolation demo",
+        enabled=True
     ),
     "filesystem": MCPServerConfig(
         server_id="filesystem",
