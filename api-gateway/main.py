@@ -376,6 +376,19 @@ async def proxy_handler(path: str, request: Request):
             backend_path = "/admin" + full_path[14:]  # /mcp-admin/api/x -> /admin/x
         else:
             backend_path = "/portal" + full_path[10:]  # /mcp-admin/x -> /portal/x
+    # MCP Admin API routes → MCP Proxy (NOT Open WebUI)
+    # These are used by the /mcp-admin portal for user/group/server management
+    elif full_path in ["/admin/users", "/admin/groups", "/admin/servers",
+                       "/admin/endpoints", "/admin/tenant-keys", "/admin/analytics"]:
+        backend_url = MCP_PROXY_URL
+        backend_path = full_path
+    elif full_path.startswith("/admin/users/") and not full_path.startswith("/admin/users/overview"):
+        # /admin/users/{id} → MCP Proxy (but /admin/users/overview → Open WebUI)
+        backend_url = MCP_PROXY_URL
+        backend_path = full_path
+    elif full_path.startswith("/admin/groups/"):
+        backend_url = MCP_PROXY_URL
+        backend_path = full_path
     # /mcp/* → MCP Proxy (tool endpoints)
     elif full_path.startswith("/mcp"):
         backend_url = MCP_PROXY_URL
