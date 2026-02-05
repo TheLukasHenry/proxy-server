@@ -258,19 +258,41 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
 
     logger.debug(f"Forwarding {request.method} -> {url}")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         response = await client.request(
             method=request.method,
             url=url,
             headers=headers,
             content=body
         )
-        return Response(
+
+        # Build response headers, properly handling multiple Set-Cookie headers
+        # httpx.Headers is a multi-dict, but FastAPI Response needs special handling
+        response_headers = {}
+        for key, value in response.headers.items():
+            # Skip hop-by-hop headers that shouldn't be forwarded
+            if key.lower() in ["transfer-encoding", "connection", "keep-alive"]:
+                continue
+            response_headers[key] = value
+
+        # Create the response
+        fastapi_response = Response(
             content=response.content,
             status_code=response.status_code,
-            headers=dict(response.headers),
             media_type=response.headers.get("content-type")
         )
+
+        # Copy headers, handling Set-Cookie specially (can have multiple values)
+        for key, value in response.headers.multi_items():
+            if key.lower() in ["transfer-encoding", "connection", "keep-alive"]:
+                continue
+            if key.lower() == "set-cookie":
+                # Append each Set-Cookie header individually
+                fastapi_response.headers.append(key, value)
+            elif key.lower() not in [h.lower() for h in fastapi_response.headers.keys()]:
+                fastapi_response.headers[key] = value
+
+        return fastapi_response
 
 
 # =============================================================================
