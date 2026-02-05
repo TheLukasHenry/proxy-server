@@ -88,6 +88,33 @@ services:
       timeout: 10s
       retries: 3
 
+  # ==========================================================================
+  # Webhook Handler - External event processing
+  # ==========================================================================
+  webhook-handler:
+    build: ./webhook-handler
+    container_name: webhook-handler
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - PORT=8086
+      - DEBUG=${DEBUG:-false}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - OPENWEBUI_URL=http://open-webui:8080
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-gpt-4-turbo}
+    networks:
+      - backend
+    depends_on:
+      - open-webui
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # ===========================================================================
   # MCP PROXY - Multi-Tenant Tool Gateway
   # ===========================================================================
