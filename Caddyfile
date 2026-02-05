@@ -95,6 +95,15 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Webhook Handler (external webhooks)
+	# ---------------------------------------------------------------------------
+	handle /webhook/* {
+		reverse_proxy localhost:8086 {
+			header_down Cache-Control "no-store, no-cache, must-revalidate"
+		}
+	}
+
+	# ---------------------------------------------------------------------------
 	# Open WebUI (default, through gateway for auth)
 	# ---------------------------------------------------------------------------
 	handle /* {
