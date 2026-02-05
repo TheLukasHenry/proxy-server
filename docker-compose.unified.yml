@@ -81,7 +81,6 @@ services:
         condition: service_healthy
     networks:
       - backend
-      - internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/gateway/health"]
       interval: 30s
@@ -188,6 +187,7 @@ services:
       - ENABLE_REDIS=true
       # Microsoft OAuth
       - ENABLE_OAUTH_SIGNUP=true
+      - DEFAULT_USER_ROLE=user
       - ENABLE_LOGIN_FORM=true
       - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
       - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
