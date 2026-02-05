@@ -258,19 +258,41 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
 
     logger.debug(f"Forwarding {request.method} -> {url}")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         response = await client.request(
             method=request.method,
             url=url,
             headers=headers,
             content=body
         )
-        return Response(
+
+        # Build response headers, properly handling multiple Set-Cookie headers
+        # httpx.Headers is a multi-dict, but FastAPI Response needs special handling
+        response_headers = {}
+        for key, value in response.headers.items():
+            # Skip hop-by-hop headers that shouldn't be forwarded
+            if key.lower() in ["transfer-encoding", "connection", "keep-alive"]:
+                continue
+            response_headers[key] = value
+
+        # Create the response
+        fastapi_response = Response(
             content=response.content,
             status_code=response.status_code,
-            headers=dict(response.headers),
             media_type=response.headers.get("content-type")
         )
+
+        # Copy headers, handling Set-Cookie specially (can have multiple values)
+        for key, value in response.headers.multi_items():
+            if key.lower() in ["transfer-encoding", "connection", "keep-alive"]:
+                continue
+            if key.lower() == "set-cookie":
+                # Append each Set-Cookie header individually
+                fastapi_response.headers.append(key, value)
+            elif key.lower() not in [h.lower() for h in fastapi_response.headers.keys()]:
+                fastapi_response.headers[key] = value
+
+        return fastapi_response
 
 
 # =============================================================================
@@ -346,8 +368,25 @@ async def proxy_handler(path: str, request: Request):
     if full_path == "/mcp-admin" or full_path == "/mcp-admin/":
         backend_url = MCP_PROXY_URL
         backend_path = "/portal"
-    # /admin/* → MCP Proxy (portal API endpoints)
-    elif full_path.startswith("/admin"):
+    # /mcp-admin/* → MCP Proxy (portal assets and API)
+    elif full_path.startswith("/mcp-admin/"):
+        backend_url = MCP_PROXY_URL
+        # Map /mcp-admin/api/* to /admin/* for MCP Proxy
+        if full_path.startswith("/mcp-admin/api/"):
+            backend_path = "/admin" + full_path[14:]  # /mcp-admin/api/x -> /admin/x
+        else:
+            backend_path = "/portal" + full_path[10:]  # /mcp-admin/x -> /portal/x
+    # MCP Admin API routes → MCP Proxy (NOT Open WebUI)
+    # These are used by the /mcp-admin portal for user/group/server management
+    elif full_path in ["/admin/users", "/admin/groups", "/admin/servers",
+                       "/admin/endpoints", "/admin/tenant-keys", "/admin/analytics"]:
+        backend_url = MCP_PROXY_URL
+        backend_path = full_path
+    elif full_path.startswith("/admin/users/") and not full_path.startswith("/admin/users/overview"):
+        # /admin/users/{id} → MCP Proxy (but /admin/users/overview → Open WebUI)
+        backend_url = MCP_PROXY_URL
+        backend_path = full_path
+    elif full_path.startswith("/admin/groups/"):
         backend_url = MCP_PROXY_URL
         backend_path = full_path
     # /mcp/* → MCP Proxy (tool endpoints)
@@ -361,6 +400,7 @@ async def proxy_handler(path: str, request: Request):
         backend_url = MCP_PROXY_URL
         backend_path = full_path
     else:
+        # Everything else goes to Open WebUI (including /admin/* for WebUI admin panel)
         backend_url = OPEN_WEBUI_URL
         backend_path = full_path
 

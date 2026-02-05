@@ -81,9 +81,35 @@ services:
         condition: service_healthy
     networks:
       - backend
-      - internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/gateway/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # Webhook Handler - External event processing
+  # ==========================================================================
+  webhook-handler:
+    build: ./webhook-handler
+    container_name: webhook-handler
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - PORT=8086
+      - DEBUG=${DEBUG:-false}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - OPENWEBUI_URL=http://open-webui:8080
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-gpt-4-turbo}
+    networks:
+      - backend
+    depends_on:
+      - open-webui
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -161,10 +187,11 @@ services:
       - ENABLE_REDIS=true
       # Microsoft OAuth
       - ENABLE_OAUTH_SIGNUP=true
+      - DEFAULT_USER_ROLE=user
       - ENABLE_LOGIN_FORM=true
       - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID:-}
       - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET:-}
-      - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_CLIENT_TENANT_ID:-}
+      - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_TENANT_ID:-consumers}
       - MICROSOFT_REDIRECT_URI=${WEBUI_URL:-http://localhost}/oauth/microsoft/callback
       - OPENID_PROVIDER_URL=${OPENID_PROVIDER_URL:-}
       - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
