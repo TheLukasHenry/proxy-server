@@ -158,6 +158,7 @@ services:
       # API GATEWAY MODE - Trust headers from gateway
       # =======================================================================
       - API_GATEWAY_MODE=true
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups,X-User-Admin
       # Database for permission lookups
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
@@ -186,7 +187,7 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -198,6 +199,8 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
     volumes:
       - open-webui-data:/app/backend/data
     environment:
