@@ -344,8 +344,9 @@ async def proxy_handler(path: str, request: Request):
                 is_admin = await is_user_admin(user_email)
                 logger.info(f"Auth OK: {user_email} -> groups={user_groups}, admin={is_admin}")
 
-    # Rate limiting
-    if RATE_LIMIT_ENABLED:
+    # Rate limiting (skip for static assets — browser loads 60+ at once on page load)
+    is_static_asset = full_path.startswith("/_app/") or full_path.startswith("/static/") or full_path.startswith("/favicon")
+    if RATE_LIMIT_ENABLED and not is_static_asset:
         rate_key = f"user:{user_email}" if user_email else f"ip:{client_ip}"
         limit = RATE_LIMIT_PER_MINUTE if user_email else RATE_LIMIT_PER_IP
         allowed, remaining = await rate_limiter.is_allowed(rate_key, limit)

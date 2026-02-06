@@ -44,6 +44,28 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Static assets (bypass gateway - no auth/rate-limiting needed)
+	# ---------------------------------------------------------------------------
+	# Open WebUI SPA assets: JS chunks, CSS, fonts, images, manifests
+	# These must bypass the API Gateway to avoid rate limiting when the
+	# browser loads 60+ assets simultaneously on page load.
+	handle /_app/* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /static/* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /favicon* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /manifest.json {
+		reverse_proxy open-webui:8080
+	}
+
+	# ---------------------------------------------------------------------------
 	# Gateway health (direct to gateway)
 	# ---------------------------------------------------------------------------
 	handle /gateway/* {
