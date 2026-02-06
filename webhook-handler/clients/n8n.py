@@ -1,0 +1,104 @@
+"""n8n workflow automation client."""
+import httpx
+from typing import Any, Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class N8NClient:
+    """Client for triggering n8n workflows via webhook nodes."""
+
+    def __init__(self, base_url: str, api_key: str = ""):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout = 60.0  # n8n workflows can be slow
+
+    async def trigger_workflow(
+        self,
+        webhook_path: str,
+        payload: dict[str, Any] = None
+    ) -> Optional[dict[str, Any]]:
+        """
+        Trigger an n8n workflow via its webhook node.
+
+        n8n webhook URLs follow the pattern:
+        {base_url}/webhook/{webhook_path}
+
+        Args:
+            webhook_path: The webhook path configured in n8n (e.g., 'github-issue')
+            payload: JSON payload to send to the workflow
+
+        Returns:
+            Workflow response dict, or None on error
+        """
+        url = f"{self.base_url}/webhook/{webhook_path}"
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    json=payload or {},
+                    headers=headers
+                )
+                response.raise_for_status()
+
+                result = response.json()
+                logger.info(f"n8n workflow triggered: {webhook_path}")
+                return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"n8n error for {webhook_path}: "
+                f"{e.response.status_code} - {e.response.text}"
+            )
+            return None
+        except httpx.TimeoutException:
+            logger.error(f"Timeout triggering n8n workflow: {webhook_path}")
+            return None
+        except Exception as e:
+            logger.error(f"Error triggering n8n workflow: {e}")
+            return None
+
+    async def trigger_workflow_by_id(
+        self,
+        workflow_id: str,
+        payload: dict[str, Any] = None
+    ) -> Optional[dict[str, Any]]:
+        """
+        Trigger an n8n workflow via the API (requires API key).
+
+        Args:
+            workflow_id: n8n workflow ID
+            payload: JSON payload
+
+        Returns:
+            Execution result dict, or None on error
+        """
+        if not self.api_key:
+            logger.error("n8n API key required for workflow-by-id execution")
+            return None
+
+        url = f"{self.base_url}/api/v1/workflows/{workflow_id}/execute"
+        headers = {
+            "Content-Type": "application/json",
+            "X-N8N-API-KEY": self.api_key
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    json={"data": payload or {}},
+                    headers=headers
+                )
+                response.raise_for_status()
+
+                result = response.json()
+                logger.info(f"n8n workflow {workflow_id} executed via API")
+                return result
+
+        except Exception as e:
+            logger.error(f"Error executing n8n workflow {workflow_id}: {e}")
+            return None

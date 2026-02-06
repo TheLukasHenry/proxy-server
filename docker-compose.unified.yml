@@ -104,15 +104,44 @@ services:
       - OPENWEBUI_URL=http://open-webui:8080
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
       - AI_MODEL=${AI_MODEL:-gpt-4-turbo}
+      - MCP_PROXY_URL=http://mcp-proxy:8000
+      - MCP_USER_EMAIL=webhook-handler@system
+      - MCP_USER_GROUPS=MCP-Admin
+      - N8N_URL=http://n8n:5678
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
     networks:
       - backend
     depends_on:
       - open-webui
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ==========================================================================
+  # n8n - Workflow Automation
+  # ==========================================================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-}
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://ai-ui.coolestdomain.win/n8n/
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - backend
 
   # ===========================================================================
   # MCP PROXY - Multi-Tenant Tool Gateway
@@ -407,3 +436,4 @@ volumes:
   postgres-data:
   redis-data:
   open-webui-data:
+  n8n_data:

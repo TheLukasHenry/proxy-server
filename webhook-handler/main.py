@@ -8,7 +8,14 @@ from typing import Optional
 from config import settings
 from clients.openwebui import OpenWebUIClient
 from clients.github import GitHubClient, verify_github_signature
+from clients.mcp_proxy import MCPProxyClient
+from clients.n8n import N8NClient
+from clients.slack import SlackClient, verify_slack_signature
 from handlers.github import GitHubWebhookHandler
+from handlers.mcp import MCPWebhookHandler
+from handlers.slack import SlackWebhookHandler
+from handlers.generic import GenericWebhookHandler
+from scheduler import init_scheduler, start_scheduler, shutdown_scheduler, list_jobs
 
 # Configure logging
 logging.basicConfig(
@@ -21,12 +28,19 @@ logger = logging.getLogger(__name__)
 openwebui_client: Optional[OpenWebUIClient] = None
 github_client: Optional[GitHubClient] = None
 github_handler: Optional[GitHubWebhookHandler] = None
+mcp_handler: Optional[MCPWebhookHandler] = None
+n8n_client: Optional[N8NClient] = None
+slack_client: Optional[SlackClient] = None
+slack_handler: Optional[SlackWebhookHandler] = None
+generic_handler: Optional[GenericWebhookHandler] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize clients on startup."""
     global openwebui_client, github_client, github_handler
+    global mcp_handler, n8n_client
+    global slack_client, slack_handler, generic_handler
 
     logger.info("Initializing webhook handler...")
 
@@ -44,18 +58,58 @@ async def lifespan(app: FastAPI):
         ai_system_prompt=settings.ai_system_prompt
     )
 
+    # MCP Proxy client
+    mcp_client = MCPProxyClient(
+        base_url=settings.mcp_proxy_url,
+        user_email=settings.mcp_user_email,
+        user_groups=settings.mcp_user_groups
+    )
+    mcp_handler = MCPWebhookHandler(mcp_client=mcp_client)
+    logger.info(f"MCP Proxy URL: {settings.mcp_proxy_url}")
+
+    # n8n client
+    n8n_client = N8NClient(
+        base_url=settings.n8n_url,
+        api_key=settings.n8n_api_key
+    )
+    logger.info(f"n8n URL: {settings.n8n_url}")
+
+    # Slack client (only if configured)
+    if settings.slack_bot_token:
+        slack_client = SlackClient(bot_token=settings.slack_bot_token)
+        slack_handler = SlackWebhookHandler(
+            openwebui_client=openwebui_client,
+            slack_client=slack_client,
+            ai_model=settings.ai_model,
+            ai_system_prompt=settings.ai_system_prompt
+        )
+        logger.info("Slack integration enabled")
+    else:
+        logger.info("Slack integration disabled (no SLACK_BOT_TOKEN)")
+
+    # Generic handler
+    generic_handler = GenericWebhookHandler(
+        openwebui_client=openwebui_client,
+        ai_model=settings.ai_model
+    )
+
+    # Scheduler
+    init_scheduler()
+    start_scheduler()
+
     logger.info(f"Webhook handler ready on port {settings.port}")
     logger.info(f"Open WebUI URL: {settings.openwebui_url}")
 
     yield
 
+    shutdown_scheduler()
     logger.info("Shutting down webhook handler...")
 
 
 app = FastAPI(
     title="Webhook Handler Service",
     description="Receives webhooks and triggers Open WebUI AI analysis",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -66,7 +120,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "webhook-handler",
-        "version": "1.0.0"
+        "version": "2.0.0"
     }
 
 
@@ -111,6 +165,152 @@ async def github_webhook(
         return JSONResponse(content=result, status_code=200)
     else:
         return JSONResponse(content=result, status_code=500)
+
+
+@app.post("/webhook/mcp/{server_id}/{tool_name}")
+async def mcp_webhook(
+    request: Request,
+    server_id: str,
+    tool_name: str
+):
+    """
+    Execute an MCP tool directly via webhook.
+
+    POST /webhook/mcp/{server_id}/{tool_name}
+    Body: JSON with tool arguments
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    logger.info(f"MCP webhook: {server_id}/{tool_name}")
+
+    result = await mcp_handler.handle_tool_request(
+        server_id=server_id,
+        tool_name=tool_name,
+        arguments=payload
+    )
+
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=500)
+
+
+@app.post("/webhook/n8n/{workflow_path:path}")
+async def n8n_webhook(
+    request: Request,
+    workflow_path: str
+):
+    """
+    Forward a webhook payload to an n8n workflow.
+
+    POST /webhook/n8n/{workflow_path}
+    Body: JSON payload forwarded to n8n webhook node
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    logger.info(f"n8n webhook forward: {workflow_path}")
+
+    result = await n8n_client.trigger_workflow(
+        webhook_path=workflow_path,
+        payload=payload
+    )
+
+    if result is not None:
+        return JSONResponse(content={"success": True, "result": result}, status_code=200)
+    else:
+        return JSONResponse(
+            content={"success": False, "error": f"Failed to trigger n8n workflow: {workflow_path}"},
+            status_code=500
+        )
+
+
+@app.post("/webhook/slack")
+async def slack_webhook(
+    request: Request,
+    x_slack_request_timestamp: str = Header(None, alias="X-Slack-Request-Timestamp"),
+    x_slack_signature: str = Header(None, alias="X-Slack-Signature")
+):
+    """
+    Handle Slack Events API webhooks.
+
+    Validates signature, handles url_verification challenge,
+    and routes events to the Slack handler.
+    """
+    if not slack_handler:
+        raise HTTPException(status_code=503, detail="Slack integration not configured")
+
+    body = await request.body()
+
+    # Verify signature if signing secret is configured
+    if settings.slack_signing_secret:
+        if not verify_slack_signature(
+            body=body,
+            timestamp=x_slack_request_timestamp or "",
+            signature=x_slack_signature or "",
+            signing_secret=settings.slack_signing_secret
+        ):
+            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    logger.info(f"Received Slack event: {payload.get('type')}")
+
+    result = await slack_handler.handle_event(payload)
+
+    # URL verification returns the challenge directly
+    if "challenge" in result:
+        return JSONResponse(content=result, status_code=200)
+
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=500)
+
+
+@app.post("/webhook/generic")
+async def generic_webhook(request: Request):
+    """
+    Handle generic webhook payloads.
+
+    Accepts any JSON, runs AI analysis, returns result.
+
+    Optional query params:
+    - prompt: Custom prompt template (use {payload} placeholder)
+    - model: Model override
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    prompt = request.query_params.get("prompt", "")
+    model = request.query_params.get("model", "")
+
+    result = await generic_handler.handle_request(
+        payload=payload,
+        prompt_template=prompt,
+        model=model
+    )
+
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=500)
+
+
+@app.get("/webhook/scheduler/jobs")
+async def scheduler_jobs():
+    """List all scheduled jobs."""
+    return {"jobs": list_jobs()}
 
 
 if __name__ == "__main__":

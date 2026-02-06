@@ -115,3 +115,160 @@ Please provide:
         ]
 
         return await self.chat_completion(messages, model=model)
+
+    async def analyze_pull_request(
+        self,
+        title: str,
+        body: str,
+        diff_summary: str,
+        labels: list[str],
+        model: str = "gpt-4-turbo",
+        system_prompt: str = ""
+    ) -> Optional[str]:
+        """
+        Analyze a GitHub pull request and return AI review.
+
+        Args:
+            title: PR title
+            body: PR body/description
+            diff_summary: Summary of files changed
+            labels: List of label names
+            model: Model to use
+            system_prompt: System prompt for the AI
+
+        Returns:
+            AI review text, or None on error
+        """
+        if not system_prompt:
+            system_prompt = (
+                "You are a helpful AI code reviewer. Review pull requests "
+                "and provide constructive feedback. Be concise and actionable."
+            )
+
+        labels_str = ", ".join(labels) if labels else "none"
+
+        user_prompt = f"""Review this GitHub pull request:
+
+**Title:** {title}
+
+**Description:**
+{body or "No description provided."}
+
+**Files Changed:**
+{diff_summary or "No diff summary available."}
+
+**Labels:** {labels_str}
+
+Please provide:
+1. Brief summary of the changes
+2. Potential issues or concerns
+3. Suggestions for improvement
+4. Overall assessment"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        return await self.chat_completion(messages, model=model)
+
+    async def analyze_comment(
+        self,
+        context_title: str,
+        context_body: str,
+        comment_body: str,
+        comment_author: str,
+        model: str = "gpt-4-turbo",
+        system_prompt: str = ""
+    ) -> Optional[str]:
+        """
+        Analyze a GitHub comment (on issue or PR) and return AI response.
+
+        Args:
+            context_title: Title of the issue/PR being commented on
+            context_body: Body of the issue/PR
+            comment_body: The comment text
+            comment_author: Who wrote the comment
+            model: Model to use
+            system_prompt: System prompt for the AI
+
+        Returns:
+            AI response text, or None on error
+        """
+        if not system_prompt:
+            system_prompt = (
+                "You are a helpful AI assistant responding to GitHub comments. "
+                "Be concise, helpful, and actionable."
+            )
+
+        user_prompt = f"""Respond to this GitHub comment:
+
+**Context (Issue/PR Title):** {context_title}
+
+**Context (Issue/PR Body):**
+{context_body or "No description provided."}
+
+**Comment by {comment_author}:**
+{comment_body}
+
+Please provide a helpful response."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        return await self.chat_completion(messages, model=model)
+
+    async def analyze_push(
+        self,
+        commits: list[dict],
+        branch: str,
+        pusher: str,
+        model: str = "gpt-4-turbo",
+        system_prompt: str = ""
+    ) -> Optional[str]:
+        """
+        Analyze a GitHub push event and return AI summary.
+
+        Args:
+            commits: List of commit dicts with 'message', 'author', 'url'
+            branch: Branch name
+            pusher: Who pushed
+            model: Model to use
+            system_prompt: System prompt for the AI
+
+        Returns:
+            AI summary text, or None on error
+        """
+        if not system_prompt:
+            system_prompt = (
+                "You are a helpful AI assistant that analyzes git push events. "
+                "Summarize changes and detect patterns. Be concise."
+            )
+
+        commits_text = ""
+        for c in commits[:10]:  # Limit to 10 commits
+            msg = c.get("message", "No message")
+            author = c.get("author", {}).get("name", "Unknown")
+            commits_text += f"- {author}: {msg}\n"
+
+        user_prompt = f"""Analyze this push event:
+
+**Branch:** {branch}
+**Pushed by:** {pusher}
+
+**Commits ({len(commits)}):**
+{commits_text}
+
+Please provide:
+1. Summary of changes
+2. Any patterns detected (bug fixes, features, refactoring)
+3. Any concerns"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        return await self.chat_completion(messages, model=model)
