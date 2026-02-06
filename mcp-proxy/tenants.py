@@ -592,7 +592,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",
         description="GitHub for Jacintalama tenant - data isolation demo",
-        enabled=True
+        enabled=bool(os.getenv("MCP_GITHUB_JACINTALAMA_URL"))
     ),
     "filesystem": MCPServerConfig(
         server_id="filesystem",
