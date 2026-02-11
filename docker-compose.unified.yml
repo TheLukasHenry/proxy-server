@@ -107,6 +107,7 @@ services:
       - MCP_PROXY_URL=http://mcp-proxy:8000
       - MCP_USER_EMAIL=webhook-handler@system
       - MCP_USER_GROUPS=MCP-Admin
+      - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
       - N8N_URL=http://n8n:5678
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
@@ -177,6 +178,8 @@ services:
       - TRELLO_API_KEY=${TRELLO_API_KEY:-}
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
       - SONARQUBE_URL=${SONARQUBE_URL:-}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
       # Meta-tools mode
       - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
       # Skip cache refresh on startup (faster boot)
@@ -385,6 +388,7 @@ services:
     environment:
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
       - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
+      - SONARQUBE_ORGANIZATION=${SONARQUBE_ORGANIZATION:-}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend

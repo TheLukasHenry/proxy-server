@@ -15,6 +15,7 @@ from handlers.github import GitHubWebhookHandler
 from handlers.mcp import MCPWebhookHandler
 from handlers.slack import SlackWebhookHandler
 from handlers.generic import GenericWebhookHandler
+from handlers.automation import AutomationWebhookHandler
 from scheduler import init_scheduler, start_scheduler, shutdown_scheduler, list_jobs
 
 # Configure logging
@@ -33,6 +34,7 @@ n8n_client: Optional[N8NClient] = None
 slack_client: Optional[SlackClient] = None
 slack_handler: Optional[SlackWebhookHandler] = None
 generic_handler: Optional[GenericWebhookHandler] = None
+automation_handler: Optional[AutomationWebhookHandler] = None
 
 
 @asynccontextmanager
@@ -40,7 +42,7 @@ async def lifespan(app: FastAPI):
     """Initialize clients on startup."""
     global openwebui_client, github_client, github_handler
     global mcp_handler, n8n_client
-    global slack_client, slack_handler, generic_handler
+    global slack_client, slack_handler, generic_handler, automation_handler
 
     logger.info("Initializing webhook handler...")
 
@@ -92,6 +94,13 @@ async def lifespan(app: FastAPI):
         openwebui_client=openwebui_client,
         ai_model=settings.ai_model
     )
+
+    # Automation handler (delegates to pipe function)
+    automation_handler = AutomationWebhookHandler(
+        openwebui_client=openwebui_client,
+        pipe_model=settings.automation_pipe_model
+    )
+    logger.info(f"Automation pipe model: {settings.automation_pipe_model}")
 
     # Scheduler
     init_scheduler()
@@ -299,6 +308,38 @@ async def generic_webhook(request: Request):
         payload=payload,
         prompt_template=prompt,
         model=model
+    )
+
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=500)
+
+
+@app.post("/webhook/automation")
+async def automation_webhook(request: Request):
+    """
+    Handle automation webhook payloads.
+
+    Combines AI reasoning with MCP tool execution via the Webhook Automation
+    pipe function running inside Open WebUI.
+
+    Optional query params:
+    - source: Origin identifier (e.g., "github", "slack", "manual")
+    - instructions: Natural-language instructions for the AI
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    source = request.query_params.get("source", "webhook")
+    instructions = request.query_params.get("instructions", "")
+
+    result = await automation_handler.handle_request(
+        payload=payload,
+        source=source,
+        instructions=instructions,
     )
 
     if result.get("success"):

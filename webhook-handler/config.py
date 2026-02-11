@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     mcp_user_email: str = "webhook-handler@system"
     mcp_user_groups: str = "MCP-Admin"
 
+    # Automation Pipe
+    automation_pipe_model: str = "webhook_automation.webhook-automation"
+
     # n8n
     n8n_url: str = "http://n8n:5678"
     n8n_api_key: str = ""
