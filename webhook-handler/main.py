@@ -16,7 +16,11 @@ from handlers.mcp import MCPWebhookHandler
 from handlers.slack import SlackWebhookHandler
 from handlers.generic import GenericWebhookHandler
 from handlers.automation import AutomationWebhookHandler
-from scheduler import init_scheduler, start_scheduler, shutdown_scheduler, list_jobs
+from scheduler import (
+    init_scheduler, start_scheduler, shutdown_scheduler,
+    list_jobs, trigger_job, register_default_jobs,
+    daily_health_report, hourly_n8n_workflow_check,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -53,13 +57,6 @@ async def lifespan(app: FastAPI):
 
     github_client = GitHubClient(token=settings.github_token)
 
-    github_handler = GitHubWebhookHandler(
-        openwebui_client=openwebui_client,
-        github_client=github_client,
-        ai_model=settings.ai_model,
-        ai_system_prompt=settings.ai_system_prompt
-    )
-
     # MCP Proxy client
     mcp_client = MCPProxyClient(
         base_url=settings.mcp_proxy_url,
@@ -69,12 +66,20 @@ async def lifespan(app: FastAPI):
     mcp_handler = MCPWebhookHandler(mcp_client=mcp_client)
     logger.info(f"MCP Proxy URL: {settings.mcp_proxy_url}")
 
-    # n8n client
+    # n8n client (created before github_handler so it can be passed in)
     n8n_client = N8NClient(
         base_url=settings.n8n_url,
         api_key=settings.n8n_api_key
     )
     logger.info(f"n8n URL: {settings.n8n_url}")
+
+    github_handler = GitHubWebhookHandler(
+        openwebui_client=openwebui_client,
+        github_client=github_client,
+        n8n_client=n8n_client,
+        ai_model=settings.ai_model,
+        ai_system_prompt=settings.ai_system_prompt
+    )
 
     # Slack client (only if configured)
     if settings.slack_bot_token:
@@ -104,6 +109,7 @@ async def lifespan(app: FastAPI):
 
     # Scheduler
     init_scheduler()
+    register_default_jobs()
     start_scheduler()
 
     logger.info(f"Webhook handler ready on port {settings.port}")
@@ -349,9 +355,48 @@ async def automation_webhook(request: Request):
 
 
 @app.get("/webhook/scheduler/jobs")
-async def scheduler_jobs():
-    """List all scheduled jobs."""
+async def scheduler_jobs_legacy():
+    """List all scheduled jobs (legacy path)."""
     return {"jobs": list_jobs()}
+
+
+# ---------------------------------------------------------------------------
+# Scheduler API routes
+# ---------------------------------------------------------------------------
+
+@app.get("/scheduler/jobs")
+async def get_scheduler_jobs():
+    """List all scheduled jobs with details."""
+    return {"jobs": list_jobs(), "count": len(list_jobs())}
+
+
+@app.post("/scheduler/jobs/{job_id}/trigger")
+async def trigger_scheduler_job(job_id: str):
+    """Manually trigger a scheduled job to run immediately."""
+    result = trigger_job(job_id)
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=404)
+
+
+@app.get("/scheduler/health-report")
+async def run_health_report():
+    """Run the daily health report on demand and return results."""
+    results = await daily_health_report()
+    healthy = sum(1 for r in results if r.get("status") == "healthy")
+    return {
+        "healthy": healthy,
+        "total": len(results),
+        "services": results,
+    }
+
+
+@app.get("/scheduler/n8n-check")
+async def run_n8n_check():
+    """Run the n8n workflow check on demand and return results."""
+    result = await hourly_n8n_workflow_check()
+    return result
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import logging
 
 from clients.openwebui import OpenWebUIClient
 from clients.github import GitHubClient
+from clients.n8n import N8NClient
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,13 @@ class GitHubWebhookHandler:
         self,
         openwebui_client: OpenWebUIClient,
         github_client: GitHubClient,
+        n8n_client: Optional[N8NClient] = None,
         ai_model: str = "gpt-4-turbo",
         ai_system_prompt: str = ""
     ):
         self.openwebui = openwebui_client
         self.github = github_client
+        self.n8n = n8n_client
         self.ai_model = ai_model
         self.ai_system_prompt = ai_system_prompt
 
@@ -284,10 +287,31 @@ class GitHubWebhookHandler:
 
         # For push events, we log the analysis but don't post anywhere by default
         logger.info(f"Push analysis complete for {branch}: {analysis[:200]}...")
-        return {
+
+        result = {
             "success": True,
             "message": "Push analyzed",
             "branch": branch,
             "commit_count": len(commits),
             "analysis_preview": analysis[:500]
         }
+
+        # Forward to n8n workflow for additional processing
+        if self.n8n:
+            try:
+                logger.info(f"Forwarding push event to n8n github-push workflow")
+                n8n_result = await self.n8n.trigger_workflow(
+                    webhook_path="github-push",
+                    payload=payload
+                )
+                if n8n_result:
+                    result["n8n_result"] = n8n_result
+                    logger.info("n8n workflow completed successfully")
+                else:
+                    result["n8n_result"] = None
+                    logger.warning("n8n workflow returned no result (workflow may not be deployed)")
+            except Exception as e:
+                logger.error(f"Failed to forward to n8n: {e}")
+                result["n8n_error"] = str(e)
+
+        return result

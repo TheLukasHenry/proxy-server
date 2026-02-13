@@ -10,7 +10,7 @@
       "type": "openapi",
       "description": "GitHub repository operations, issues, PRs, code search",
       "tier": "http",
-      "groups": ["MCP-Admin", "MCP-GitHub", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "groups": ["MCP-Admin", "MCP-GitHub", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp", "Test-Tenant"],
       "api_key_env": "GITHUB_TOKEN"
     },
     {
@@ -40,7 +40,7 @@
       "type": "openapi",
       "description": "Local filesystem operations (sandboxed)",
       "tier": "local",
-      "groups": ["MCP-Admin", "MCP-Filesystem", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "groups": ["MCP-Admin", "MCP-Filesystem", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp", "Test-Tenant"],
       "api_key_env": null
     },
     {
@@ -112,6 +112,10 @@
     "Tenant-AcmeCorp": {
       "description": "AcmeCorp tenant - sales and support",
       "servers": ["notion", "filesystem", "slack", "hubspot"]
+    },
+    "Test-Tenant": {
+      "description": "Test tenant - limited access for isolation testing",
+      "servers": ["github", "filesystem"]
     }
   }
 }

@@ -139,6 +139,8 @@ services:
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - WEBHOOK_URL=https://ai-ui.coolestdomain.win/n8n/
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+      - N8N_RESTRICT_ENVIRONMENT_VARIABLES_ACCESS=false
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
