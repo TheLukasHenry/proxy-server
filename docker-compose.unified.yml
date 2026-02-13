@@ -107,6 +107,7 @@ services:
       - MCP_PROXY_URL=http://mcp-proxy:8000
       - MCP_USER_EMAIL=webhook-handler@system
       - MCP_USER_GROUPS=MCP-Admin
+      - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
       - N8N_URL=http://n8n:5678
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
@@ -138,6 +139,8 @@ services:
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - WEBHOOK_URL=https://ai-ui.coolestdomain.win/n8n/
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+      - N8N_RESTRICT_ENVIRONMENT_VARIABLES_ACCESS=false
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
@@ -158,6 +161,7 @@ services:
       # API GATEWAY MODE - Trust headers from gateway
       # =======================================================================
       - API_GATEWAY_MODE=true
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups,X-User-Admin
       # Database for permission lookups
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
@@ -176,6 +180,8 @@ services:
       - TRELLO_API_KEY=${TRELLO_API_KEY:-}
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
       - SONARQUBE_URL=${SONARQUBE_URL:-}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
       # Meta-tools mode
       - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
       # Skip cache refresh on startup (faster boot)
@@ -186,7 +192,7 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -198,6 +204,8 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
     volumes:
       - open-webui-data:/app/backend/data
     environment:
@@ -382,6 +390,7 @@ services:
     environment:
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
       - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
+      - SONARQUBE_ORGANIZATION=${SONARQUBE_ORGANIZATION:-}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend

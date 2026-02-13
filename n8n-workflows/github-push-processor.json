@@ -1,0 +1,216 @@
+{
+  "name": "GitHub Push Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-push",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "github-push"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "repo",
+              "name": "repo",
+              "value": "={{ $json.body.repository?.full_name || $json.repository?.full_name || 'unknown/repo' }}",
+              "type": "string"
+            },
+            {
+              "id": "branch",
+              "name": "branch",
+              "value": "={{ ($json.body?.ref || $json.ref || '').replace('refs/heads/', '') }}",
+              "type": "string"
+            },
+            {
+              "id": "pusher",
+              "name": "pusher",
+              "value": "={{ $json.body?.pusher?.name || $json.pusher?.name || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "commit_count",
+              "name": "commit_count",
+              "value": "={{ ($json.body?.commits || $json.commits || []).length }}",
+              "type": "number"
+            },
+            {
+              "id": "commit_messages",
+              "name": "commit_messages",
+              "value": "={{ ($json.body?.commits || $json.commits || []).map(c => '- ' + (c.message || '')).join('\\n') }}",
+              "type": "string"
+            },
+            {
+              "id": "commit_authors",
+              "name": "commit_authors",
+              "value": "={{ [...new Set(($json.body?.commits || $json.commits || []).map(c => c.author?.name || 'unknown'))].join(', ') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-push-data",
+      "name": "Extract Push Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://open-webui:8080/api/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImI3OTRiYmQ1LTE1MWMtNGQ3MC1iMmNiLThmZDZiMWJlODUxZCIsImV4cCI6MTc3MTkyMjM2MiwianRpIjoiMDg2OWM0ZDAtMjg3MS00Njg0LThmNzgtM2I3MWUwYTgwMjBkIn0.rwisATi4mdCSK3vZQEPV3YIvxQrkA3ra4H6L8CejlOM"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: 'You are a GitHub push event analyzer. Summarize what changed concisely. Focus on: what was done, which areas of code were affected, and any notable patterns. Keep it under 200 words.' }, { role: 'user', content: 'Analyze this GitHub push event:\\n\\nRepository: ' + $json.repo + '\\nBranch: ' + $json.branch + '\\nPushed by: ' + $json.pusher + '\\nCommit count: ' + $json.commit_count + '\\n\\nCommit messages:\\n' + $json.commit_messages + '\\n\\nAuthors: ' + $json.commit_authors }] }) }}",
+        "options": {}
+      },
+      "id": "ai-summary",
+      "name": "AI Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "event_type",
+              "name": "event_type",
+              "value": "push",
+              "type": "string"
+            },
+            {
+              "id": "repo",
+              "name": "repo",
+              "value": "={{ $('Extract Push Data').item.json.repo }}",
+              "type": "string"
+            },
+            {
+              "id": "branch",
+              "name": "branch",
+              "value": "={{ $('Extract Push Data').item.json.branch }}",
+              "type": "string"
+            },
+            {
+              "id": "commit_count",
+              "name": "commit_count",
+              "value": "={{ $('Extract Push Data').item.json.commit_count }}",
+              "type": "number"
+            },
+            {
+              "id": "ai_summary",
+              "name": "ai_summary",
+              "value": "={{ $json.choices?.[0]?.message?.content || 'AI summary unavailable' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "workflow",
+              "name": "workflow",
+              "value": "n8n-github-push-processor",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Push Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Push Data": {
+      "main": [
+        [
+          {
+            "node": "AI Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

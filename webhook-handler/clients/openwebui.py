@@ -12,7 +12,7 @@ class OpenWebUIClient:
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.timeout = 60.0  # 60 second timeout for AI responses
+        self.timeout = 120.0  # 120 second timeout for pipe function (4 phases)
 
     async def chat_completion(
         self,

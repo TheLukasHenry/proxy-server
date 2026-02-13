@@ -104,6 +104,32 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Static assets (bypass gateway to avoid rate limiting)
+	# ---------------------------------------------------------------------------
+	handle /_app/* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /static/* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /favicon* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /manifest.json {
+		reverse_proxy open-webui:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# WebSocket (bypass gateway)
+	# ---------------------------------------------------------------------------
+	handle /ws/* {
+		reverse_proxy open-webui:8080
+	}
+
+	# ---------------------------------------------------------------------------
 	# Open WebUI (default, through gateway for auth)
 	# ---------------------------------------------------------------------------
 	handle /* {
