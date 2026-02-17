@@ -120,7 +120,7 @@ class GitHubWebhookHandler:
         }
 
     async def _handle_pull_request_event(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Handle pull request events (opened, synchronize)."""
+        """Handle pull request events — forward to n8n for automated review."""
         action = payload.get("action")
 
         if action not in ("opened", "synchronize"):
@@ -129,62 +129,63 @@ class GitHubWebhookHandler:
 
         pr = payload.get("pull_request", {})
         repo = payload.get("repository", {})
-
-        pr_number = pr.get("number")
-        title = pr.get("title", "")
-        body = pr.get("body", "")
-        labels = [label.get("name", "") for label in pr.get("labels", [])]
-
         repo_full_name = repo.get("full_name", "")
+
         if "/" not in repo_full_name:
             logger.error(f"Invalid repository name: {repo_full_name}")
             return {"success": False, "error": "Invalid repository name"}
 
-        owner, repo_name = repo_full_name.split("/", 1)
+        pr_number = pr.get("number")
+        title = pr.get("title", "")
+        logger.info(f"Forwarding PR #{pr_number}: {title} (action: {action}) to n8n")
 
-        logger.info(f"Analyzing PR #{pr_number}: {title} (action: {action})")
-
-        # Get PR file changes summary
-        diff_summary = await self.github.get_pr_files(
-            owner=owner,
-            repo=repo_name,
-            pr_number=pr_number
-        )
-
-        # Get AI analysis
-        analysis = await self.openwebui.analyze_pull_request(
-            title=title,
-            body=body,
-            diff_summary=diff_summary or "Could not retrieve file changes",
-            labels=labels,
-            model=self.ai_model,
-            system_prompt=self.ai_system_prompt
-        )
-
-        if not analysis:
-            logger.error("Failed to get AI analysis for PR")
-            return {"success": False, "error": "Failed to get AI analysis"}
-
-        # Post comment on PR (uses same issues API)
-        comment_body = self.github.format_ai_response(analysis)
-        comment_id = await self.github.post_issue_comment(
-            owner=owner,
-            repo=repo_name,
-            issue_number=pr_number,
-            body=comment_body
-        )
-
-        if not comment_id:
-            logger.error("Failed to post PR comment")
-            return {"success": False, "error": "Failed to post comment"}
-
-        logger.info(f"Successfully posted comment {comment_id} on PR #{pr_number}")
-        return {
-            "success": True,
-            "message": "PR analyzed, comment posted",
+        # Build normalized payload for n8n workflow
+        n8n_payload = {
+            "repo": repo_full_name,
             "pr_number": pr_number,
-            "comment_id": comment_id
+            "action": action,
+            "title": title,
+            "author": pr.get("user", {}).get("login", "unknown"),
+            "diff_url": pr.get("diff_url", ""),
+            "html_url": pr.get("html_url", ""),
+            "base_branch": pr.get("base", {}).get("ref", ""),
+            "head_branch": pr.get("head", {}).get("ref", ""),
+            "body": pr.get("body", "") or "",
         }
+
+        # Forward to n8n (fire-and-forget style, but we await for logging)
+        if self.n8n:
+            try:
+                n8n_result = await self.n8n.trigger_workflow("pr-review", n8n_payload)
+                if n8n_result:
+                    logger.info(f"n8n pr-review workflow completed for PR #{pr_number}")
+                    return {
+                        "success": True,
+                        "message": "PR forwarded to n8n for automated review",
+                        "pr_number": pr_number,
+                        "n8n_result": n8n_result,
+                    }
+                else:
+                    logger.warning(f"n8n pr-review returned no result for PR #{pr_number}")
+                    return {
+                        "success": True,
+                        "message": "PR forwarded to n8n (no response — workflow may not be active)",
+                        "pr_number": pr_number,
+                    }
+            except Exception as e:
+                logger.error(f"Failed to forward PR #{pr_number} to n8n: {e}")
+                return {
+                    "success": False,
+                    "error": f"Failed to trigger n8n workflow: {e}",
+                    "pr_number": pr_number,
+                }
+        else:
+            logger.warning("n8n client not configured, cannot forward PR event")
+            return {
+                "success": False,
+                "error": "n8n client not configured",
+                "pr_number": pr_number,
+            }
 
     async def _handle_comment_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle issue_comment events (created)."""
