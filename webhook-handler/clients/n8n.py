@@ -12,7 +12,7 @@ class N8NClient:
     def __init__(self, base_url: str, api_key: str = ""):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.timeout = 60.0  # n8n workflows can be slow
+        self.timeout = 120.0  # n8n workflows can be slow (AI review takes 60-90s)
 
     async def trigger_workflow(
         self,
