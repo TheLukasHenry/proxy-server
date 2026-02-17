@@ -22,10 +22,11 @@ import asyncio
 # =============================================================================
 class ServerTier(Enum):
     """MCP Server protocol tiers."""
-    HTTP = "http"      # Tier 1: Direct HTTP connection (Linear, Notion, etc.)
-    SSE = "sse"        # Tier 2: Server-Sent Events via mcpo proxy (Atlassian, Asana)
-    STDIO = "stdio"    # Tier 3: stdio via mcpo proxy (SonarQube, Sentry)
-    LOCAL = "local"    # Local container in Kubernetes cluster
+    HTTP = "http"          # Tier 1: Direct HTTP connection (HubSpot, etc.)
+    MCP_HTTP = "mcp_http"  # Tier 1b: MCP Streamable HTTP (Linear, Sentry)
+    SSE = "sse"            # Tier 2: Server-Sent Events via mcpo proxy (Atlassian, Asana)
+    STDIO = "stdio"        # Tier 3: stdio via mcpo proxy (SonarQube)
+    LOCAL = "local"        # Local container in Kubernetes cluster
 
 
 @dataclass
@@ -84,26 +85,12 @@ TIER1_SERVERS: Dict[str, MCPServerConfig] = {
     "linear": MCPServerConfig(
         server_id="linear",
         display_name="Linear",
-        tier=ServerTier.HTTP,
+        tier=ServerTier.MCP_HTTP,
         endpoint_url="https://mcp.linear.app/mcp",
         auth_type="oauth",
         api_key_env="LINEAR_API_KEY",
         description="Issue tracking and project management",
         enabled=bool(os.getenv("LINEAR_API_KEY"))
-    ),
-
-    # -------------------------------------------------------------------------
-    # Knowledge & Documentation
-    # -------------------------------------------------------------------------
-    "notion": MCPServerConfig(
-        server_id="notion",
-        display_name="Notion",
-        tier=ServerTier.HTTP,
-        endpoint_url="https://mcp.notion.com/mcp",
-        auth_type="bearer",
-        api_key_env="NOTION_API_KEY",
-        description="Workspace and documentation",
-        enabled=bool(os.getenv("NOTION_API_KEY"))
     ),
 
     # -------------------------------------------------------------------------
@@ -571,6 +558,7 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
 MCP_EXCEL_URL = os.getenv("MCP_EXCEL_URL", "http://mcp-excel:8000")
 MCP_DASHBOARD_URL = os.getenv("MCP_DASHBOARD_URL", "http://mcp-dashboard:8000")
 MCP_GITHUB_JACINTALAMA_URL = os.getenv("MCP_GITHUB_JACINTALAMA_URL", "http://mcp-github-jacintalama:8000")
+MCP_NOTION_URL = os.getenv("MCP_NOTION_URL", "http://mcp-notion:8000")
 
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     "github": MCPServerConfig(
@@ -620,6 +608,16 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="none",
         api_key_env=None,
         description="Create executive dashboards with KPI cards and interactive charts (2 tools)"
+    ),
+    "notion": MCPServerConfig(
+        server_id="notion",
+        display_name="Notion",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_NOTION_URL,
+        auth_type="bearer",
+        api_key_env="MCP_API_KEY",
+        description="Workspace and documentation",
+        enabled=bool(os.getenv("NOTION_API_KEY"))
     ),
 }
 

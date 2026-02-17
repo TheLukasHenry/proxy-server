@@ -19,7 +19,7 @@
       "url": "http://mcp-proxy:8000/linear",
       "type": "openapi",
       "description": "Linear issue tracking and project management",
-      "tier": "http",
+      "tier": "mcp_http",
       "groups": ["MCP-Admin", "Tenant-Google"],
       "api_key_env": "LINEAR_API_KEY"
     },
@@ -29,7 +29,7 @@
       "url": "http://mcp-proxy:8000/notion",
       "type": "openapi",
       "description": "Notion knowledge base and documentation",
-      "tier": "http",
+      "tier": "local",
       "groups": ["MCP-Admin", "Tenant-Google", "Tenant-AcmeCorp"],
       "api_key_env": "NOTION_API_KEY"
     },
