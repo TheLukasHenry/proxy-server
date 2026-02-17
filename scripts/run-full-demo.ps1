@@ -21,10 +21,11 @@ $ErrorActionPreference = "Continue"
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-$WEBHOOK_HANDLER = "http://localhost:8086"
-$OPEN_WEBUI      = "http://localhost:3000"
-$N8N             = "http://localhost:5678"
-$MCP_PROXY       = "http://localhost:8000"
+# Base URLs — override with env vars for production (e.g., on Hetzner VPS)
+$WEBHOOK_HANDLER = if ($env:WEBHOOK_HANDLER_URL) { $env:WEBHOOK_HANDLER_URL } else { "http://localhost:8086" }
+$OPEN_WEBUI      = if ($env:OPEN_WEBUI_URL)      { $env:OPEN_WEBUI_URL }      else { "http://localhost:3000" }
+$N8N             = if ($env:N8N_URL)              { $env:N8N_URL }              else { "http://localhost:5678" }
+$MCP_PROXY       = if ($env:MCP_PROXY_URL)        { $env:MCP_PROXY_URL }        else { "http://localhost:8000" }
 
 # Load .env for API keys
 $envFile = Join-Path $PSScriptRoot ".." ".env"

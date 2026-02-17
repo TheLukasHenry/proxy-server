@@ -9,7 +9,7 @@
 #   .\scripts\deploy-n8n-github-workflow.ps1 -N8nUrl "http://localhost:5678"
 
 param(
-    [string]$N8nUrl = "http://localhost:5678",
+    [string]$N8nUrl = $(if ($env:N8N_URL) { $env:N8N_URL } else { "http://localhost:5678" }),
     [string]$N8nApiKey = "",
     [switch]$Help
 )

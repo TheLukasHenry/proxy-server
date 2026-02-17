@@ -1,4 +1,9 @@
 $ErrorActionPreference = "Continue"
+# Base URLs — override for production
+$BASE = if ($env:BASE_URL) { $env:BASE_URL.TrimEnd('/') } else { "http://localhost" }
+$WEBHOOK_HANDLER = "${BASE}:8086"
+$MCP_PROXY = "${BASE}:8000"
+$OPEN_WEBUI_BASE = "${BASE}:3000"
 $pass = 0; $fail = 0; $warn = 0
 
 function P($t) { Write-Host "  [PASS] $t" -ForegroundColor Green; $script:pass++ }
@@ -11,13 +16,13 @@ Write-Host "  Lukas said: 'GitHub event triggers the workflow... PR, issue, push
 
 # Check webhook-handler accepts GitHub events
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:8086/health" -TimeoutSec 5
+    $r = Invoke-RestMethod -Uri "$WEBHOOK_HANDLER/health" -TimeoutSec 5
     if ($r.status -eq "healthy") { P "webhook-handler running and healthy" } else { F "webhook-handler unhealthy" }
 } catch { F "webhook-handler unreachable: $_" }
 
 # Check n8n has the GitHub Push Processor workflow
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:8086/scheduler/n8n-check" -TimeoutSec 15
+    $r = Invoke-RestMethod -Uri "$WEBHOOK_HANDLER/scheduler/n8n-check" -TimeoutSec 15
     $ghWorkflow = $r.workflows | Where-Object { $_.name -match "GitHub" -and $_.active }
     if ($ghWorkflow) { P "n8n 'GitHub Push Processor' workflow ACTIVE" } else { F "No active GitHub workflow in n8n" }
     Write-Host "    Workflows: $($r.active) active, $($r.inactive) inactive" -ForegroundColor Gray
@@ -27,7 +32,7 @@ try {
 try {
     $body = '{"ref":"refs/heads/main","commits":[],"pusher":{"name":"test"},"repository":{"full_name":"test/repo"}}'
     $headers = @{"X-GitHub-Event"="push"; "X-GitHub-Delivery"="test-123"; "Content-Type"="application/json"}
-    Invoke-WebRequest -Uri "http://localhost:8086/webhook/github" -Method POST -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 | Out-Null
+    Invoke-WebRequest -Uri "$WEBHOOK_HANDLER/webhook/github" -Method POST -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 | Out-Null
     P "webhook/github endpoint accepts push events"
 } catch {
     $code = $_.Exception.Response.StatusCode.value__
@@ -40,7 +45,7 @@ Write-Host "  Lukas said: 'trigger only the backend of WebUI... shouldn't need t
 
 # Check Open WebUI API is accessible
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:3000/api/config" -TimeoutSec 5
+    $r = Invoke-RestMethod -Uri "$OPEN_WEBUI_BASE/api/config" -TimeoutSec 5
     P "Open WebUI API accessible (v$($r.version))"
 } catch { F "Open WebUI API unreachable" }
 
@@ -53,7 +58,7 @@ if ($pipeCheck -match "webhook_automation.*pipe.*t") {
 # Check automation webhook endpoint works (API-only, no browser)
 try {
     $body = '{"source":"api-test","instructions":"echo test","payload":{"test":true}}'
-    $r = Invoke-WebRequest -Uri "http://localhost:8086/webhook/automation?source=api-test&instructions=ping" -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -UseBasicParsing -TimeoutSec 90
+    $r = Invoke-WebRequest -Uri "$WEBHOOK_HANDLER/webhook/automation?source=api-test&instructions=ping" -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -UseBasicParsing -TimeoutSec 90
     if ($r.StatusCode -eq 200) {
         P "Automation webhook works via API (no browser needed)"
         $parsed = $r.Content | ConvertFrom-Json
@@ -69,7 +74,7 @@ H "REQUIREMENT 3: Scheduled Jobs / Cron Triggers"
 Write-Host "  Lukas said: 'jobs that are scheduled to run every noon, every day'" -ForegroundColor Gray
 
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:8086/scheduler/jobs" -TimeoutSec 5
+    $r = Invoke-RestMethod -Uri "$WEBHOOK_HANDLER/scheduler/jobs" -TimeoutSec 5
     if ($r.count -ge 2) { P "Scheduler has $($r.count) jobs configured" } else { F "Expected 2+ jobs, got $($r.count)" }
 
     $dailyJob = $r.jobs | Where-Object { $_.id -eq "daily_health_report" }
@@ -81,13 +86,13 @@ try {
 
 # Test manual trigger
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:8086/scheduler/jobs/daily_health_report/trigger" -Method POST -TimeoutSec 10
+    $r = Invoke-RestMethod -Uri "$WEBHOOK_HANDLER/scheduler/jobs/daily_health_report/trigger" -Method POST -TimeoutSec 10
     if ($r.success) { P "Manual job trigger works (POST /scheduler/jobs/{id}/trigger)" } else { F "Manual trigger failed" }
 } catch { F "Manual trigger error: $_" }
 
 # Test on-demand health report
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:8086/scheduler/health-report" -TimeoutSec 15
+    $r = Invoke-RestMethod -Uri "$WEBHOOK_HANDLER/scheduler/health-report" -TimeoutSec 15
     P "On-demand health report: $($r.healthy)/$($r.total) services healthy"
 } catch { F "Health report failed: $_" }
 
@@ -124,7 +129,7 @@ if ($totalTools -gt 0) { P "$totalTools MCP tools available across active server
 # Test GitHub MCP tool directly
 try {
     $body = '{}'
-    $r = Invoke-WebRequest -Uri "http://localhost:8086/webhook/mcp/github/github_get_me" -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -UseBasicParsing -TimeoutSec 15
+    $r = Invoke-WebRequest -Uri "$WEBHOOK_HANDLER/webhook/mcp/github/github_get_me" -Method POST -Body $body -Headers @{"Content-Type"="application/json"} -UseBasicParsing -TimeoutSec 15
     $parsed = $r.Content | ConvertFrom-Json
     if ($parsed.success) { P "GitHub MCP tool (github_get_me) works: user=$($parsed.result.login)" }
     else { F "GitHub MCP tool failed" }
@@ -139,7 +144,7 @@ H "REQUIREMENT 5: n8n Workflows Connected"
 Write-Host "  Lukas said: 'n8n workflow... the workflow as a model'" -ForegroundColor Gray
 
 try {
-    $r = Invoke-RestMethod -Uri "http://localhost:8086/scheduler/n8n-check" -TimeoutSec 15
+    $r = Invoke-RestMethod -Uri "$WEBHOOK_HANDLER/scheduler/n8n-check" -TimeoutSec 15
     P "n8n connected: $($r.total) workflows ($($r.active) active)"
     foreach ($wf in $r.workflows) {
         $status = if ($wf.active) { "ACTIVE" } else { "inactive" }
@@ -149,7 +154,7 @@ try {
 
 # Test n8n webhook forwarding endpoint exists
 try {
-    Invoke-WebRequest -Uri "http://localhost:8086/webhook/n8n/test-path" -Method POST -Body '{}' -Headers @{"Content-Type"="application/json"} -UseBasicParsing -TimeoutSec 10 | Out-Null
+    Invoke-WebRequest -Uri "$WEBHOOK_HANDLER/webhook/n8n/test-path" -Method POST -Body '{}' -Headers @{"Content-Type"="application/json"} -UseBasicParsing -TimeoutSec 10 | Out-Null
     P "n8n webhook forwarding endpoint works"
 } catch {
     $code = $_.Exception.Response.StatusCode.value__
