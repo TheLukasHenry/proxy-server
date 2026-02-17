@@ -61,7 +61,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4-turbo', messages: [{ role: 'system', content: 'You are a senior code reviewer. Review this pull request diff. Focus on: bugs, security issues, performance concerns, code style, and suggestions. Be concise. Format as markdown.' }, { role: 'user', content: 'Review this Pull Request:\\n\\nTitle: ' + $('Webhook').item.json.body.title + '\\nAuthor: ' + $('Webhook').item.json.body.author + '\\nBase: ' + $('Webhook').item.json.body.base_branch + ' ← ' + $('Webhook').item.json.body.head_branch + '\\n\\nFiles changed:\\n' + ((Array.isArray($json) ? $json : []).map(f => '### ' + f.filename + '\\n```diff\\n' + (f.patch || 'Binary file') + '\\n```').join('\\n')).substring(0, 8000) }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-5', messages: [{ role: 'system', content: 'You are a senior code reviewer. Review this pull request diff. Focus on: bugs, security issues, performance concerns, code style, and suggestions. Be concise. Format as markdown.' }, { role: 'user', content: 'Review this Pull Request:\\n\\nTitle: ' + $('Webhook').item.json.body.title + '\\nAuthor: ' + $('Webhook').item.json.body.author + '\\nBase: ' + $('Webhook').item.json.body.base_branch + ' ← ' + $('Webhook').item.json.body.head_branch + '\\n\\nFiles changed:\\n' + ((Array.isArray($json) ? $json : []).map(f => '### ' + f.filename + '\\n```diff\\n' + (f.patch || 'Binary file') + '\\n```').join('\\n')).substring(0, 8000) }] }) }}",
         "options": {}
       },
       "id": "ai-code-review",

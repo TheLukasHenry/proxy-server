@@ -92,6 +92,16 @@
       "tier": "local",
       "groups": ["MCP-Admin", "MCP-Excel", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
       "api_key_env": null
+    },
+    {
+      "id": "n8n",
+      "name": "n8n Workflows MCP",
+      "url": "http://mcp-proxy:8000/n8n",
+      "type": "openapi",
+      "description": "AI-driven n8n workflow creation, management, and execution",
+      "tier": "local",
+      "groups": ["MCP-Admin"],
+      "api_key_env": "N8N_API_KEY"
     }
   ],
   "special_groups": {
