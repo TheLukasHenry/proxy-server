@@ -153,17 +153,19 @@ class GitHubWebhookHandler:
             "body": pr.get("body", "") or "",
         }
 
-        # Forward to n8n (fire-and-forget style, but we await for logging)
+        # Forward to n8n — awaits the workflow execution (may take 10-30s)
         if self.n8n:
             try:
-                n8n_result = await self.n8n.trigger_workflow("pr-review", n8n_payload)
+                n8n_result = await self.n8n.trigger_workflow(
+                    webhook_path="pr-review",
+                    payload=n8n_payload,
+                )
                 if n8n_result:
                     logger.info(f"n8n pr-review workflow completed for PR #{pr_number}")
                     return {
                         "success": True,
                         "message": "PR forwarded to n8n for automated review",
                         "pr_number": pr_number,
-                        "n8n_result": n8n_result,
                     }
                 else:
                     logger.warning(f"n8n pr-review returned no result for PR #{pr_number}")
@@ -176,7 +178,7 @@ class GitHubWebhookHandler:
                 logger.error(f"Failed to forward PR #{pr_number} to n8n: {e}")
                 return {
                     "success": False,
-                    "error": f"Failed to trigger n8n workflow: {e}",
+                    "error": "Failed to trigger n8n workflow",
                     "pr_number": pr_number,
                 }
         else:
