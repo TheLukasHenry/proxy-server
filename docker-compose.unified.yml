@@ -141,6 +141,7 @@ services:
       - N8N_PROTOCOL=https
       - WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://ai-ui.coolestdomain.win/n8n/}
       - N8N_RESTRICT_ENVIRONMENT_VARIABLES_ACCESS=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       # Secrets for n8n workflow nodes
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
