@@ -139,8 +139,11 @@ services:
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://ai-ui.coolestdomain.win/n8n/}
-      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
       - N8N_RESTRICT_ENVIRONMENT_VARIABLES_ACCESS=false
+      # Secrets for n8n workflow nodes
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
@@ -174,6 +177,7 @@ services:
       - MCP_EXCEL_URL=http://mcp-excel:8000
       - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
       - MCP_NOTION_URL=http://mcp-notion:8000
+      - MCP_N8N_URL=http://mcp-n8n:8000
       # API Keys
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -183,6 +187,7 @@ services:
       - SONARQUBE_URL=${SONARQUBE_URL:-}
       - LINEAR_API_KEY=${LINEAR_API_KEY:-}
       - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - N8N_API_KEY=${N8N_API_KEY:-}
       # Meta-tools mode
       - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
       # Skip cache refresh on startup (faster boot)
@@ -420,6 +425,24 @@ services:
     environment:
       - OPENAPI_MCP_HEADERS={"Authorization":"Bearer ${NOTION_API_KEY}","Notion-Version":"2022-06-28"}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+  # n8n MCP - AI-driven workflow creation and management (20 tools)
+  mcp-n8n:
+    build: ./mcp-servers/n8n
+    container_name: mcp-n8n
+    restart: unless-stopped
+    environment:
+      - MCP_MODE=stdio
+      - N8N_API_URL=http://n8n:5678
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      - LOG_LEVEL=error
+      - DISABLE_CONSOLE_OUTPUT=true
+      - N8N_MCP_TELEMETRY_DISABLED=true
+    depends_on:
+      - n8n
     networks:
       - backend
 
