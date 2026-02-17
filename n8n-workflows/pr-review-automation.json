@@ -61,7 +61,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4-turbo', messages: [{ role: 'system', content: 'You are a senior code reviewer. Review this pull request diff. Focus on: bugs, security issues, performance concerns, code style, and suggestions. Be concise. Format as markdown.' }, { role: 'user', content: 'Review this Pull Request:\\n\\nTitle: ' + $('Webhook').item.json.body.title + '\\nAuthor: ' + $('Webhook').item.json.body.author + '\\nBase: ' + $('Webhook').item.json.body.base_branch + ' ← ' + $('Webhook').item.json.body.head_branch + '\\n\\nFiles changed:\\n' + ($json.map(f => '### ' + f.filename + '\\n```diff\\n' + (f.patch || 'Binary file') + '\\n```').join('\\n')).substring(0, 8000) }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4-turbo', messages: [{ role: 'system', content: 'You are a senior code reviewer. Review this pull request diff. Focus on: bugs, security issues, performance concerns, code style, and suggestions. Be concise. Format as markdown.' }, { role: 'user', content: 'Review this Pull Request:\\n\\nTitle: ' + $('Webhook').item.json.body.title + '\\nAuthor: ' + $('Webhook').item.json.body.author + '\\nBase: ' + $('Webhook').item.json.body.base_branch + ' ← ' + $('Webhook').item.json.body.head_branch + '\\n\\nFiles changed:\\n' + ((Array.isArray($json) ? $json : []).map(f => '### ' + f.filename + '\\n```diff\\n' + (f.patch || 'Binary file') + '\\n```').join('\\n')).substring(0, 8000) }] }) }}",
         "options": {}
       },
       "id": "ai-code-review",
@@ -90,7 +90,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ body: '\\ud83e\\udd16 **AI Code Review**\\n\\n' + ($json.choices[0].message.content || 'Review unavailable') + '\\n\\n---\\n*Automated review by n8n + Open WebUI*' }) }}",
+        "jsonBody": "={{ JSON.stringify({ body: '\\ud83e\\udd16 **AI Code Review**\\n\\n' + ($json.choices?.[0]?.message?.content || 'Review unavailable') + '\\n\\n---\\n*Automated review by n8n + Open WebUI*' }) }}",
         "options": {}
       },
       "id": "post-github-comment",
@@ -110,16 +110,12 @@
             {
               "name": "Authorization",
               "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: '#automation', text: '*PR Review Complete*\\n\\n*PR:* ' + $('Webhook').item.json.body.title + '\\n*Author:* ' + $('Webhook').item.json.body.author + '\\n*Repo:* ' + $('Webhook').item.json.body.repo + '\\n*Link:* ' + $('Webhook').item.json.body.html_url + '\\n\\n*AI Review Excerpt:*\\n' + ($('AI Code Review').item.json.choices[0].message.content || 'Review unavailable').substring(0, 500) + '...' }) }}",
+        "jsonBody": "={{ JSON.stringify({ channel: '#automation', text: '*PR Review Complete*\\n\\n*PR:* ' + $('Webhook').item.json.body.title + '\\n*Author:* ' + $('Webhook').item.json.body.author + '\\n*Repo:* ' + $('Webhook').item.json.body.repo + '\\n*Link:* ' + $('Webhook').item.json.body.html_url + '\\n\\n*AI Review Excerpt:*\\n' + ($('AI Code Review').item.json.choices?.[0]?.message?.content || 'Review unavailable').substring(0, 500) + '...' }) }}",
         "options": {}
       },
       "id": "slack-notification",
