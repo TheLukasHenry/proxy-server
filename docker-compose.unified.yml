@@ -66,8 +66,8 @@ services:
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       # Rate limiting
       - RATE_LIMIT_ENABLED=true
-      - RATE_LIMIT_PER_MINUTE=100
-      - RATE_LIMIT_PER_IP=1000
+      - RATE_LIMIT_PER_MINUTE=500
+      - RATE_LIMIT_PER_IP=5000
       # Analytics logging
       - ENABLE_API_ANALYTICS=true
       # Backend service URLs
@@ -437,14 +437,12 @@ services:
     restart: unless-stopped
     environment:
       - MCP_MODE=stdio
-      - N8N_API_URL=http://n8n:5678
+      - N8N_API_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
       - LOG_LEVEL=error
       - DISABLE_CONSOLE_OUTPUT=true
       - N8N_MCP_TELEMETRY_DISABLED=true
-    depends_on:
-      - n8n
     networks:
       - backend
 
