@@ -11,6 +11,7 @@ from clients.github import GitHubClient, verify_github_signature
 from clients.mcp_proxy import MCPProxyClient
 from clients.n8n import N8NClient
 from clients.slack import SlackClient, verify_slack_signature
+from clients.discord import DiscordClient, verify_discord_signature
 from handlers.github import GitHubWebhookHandler
 from handlers.mcp import MCPWebhookHandler
 from handlers.slack import SlackWebhookHandler
@@ -18,6 +19,7 @@ from handlers.generic import GenericWebhookHandler
 from handlers.automation import AutomationWebhookHandler
 from handlers.commands import CommandRouter
 from handlers.slack_commands import SlackCommandHandler
+from handlers.discord_commands import DiscordCommandHandler
 from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
     list_jobs, trigger_job, register_default_jobs,
@@ -43,6 +45,8 @@ generic_handler: Optional[GenericWebhookHandler] = None
 automation_handler: Optional[AutomationWebhookHandler] = None
 command_router: Optional[CommandRouter] = None
 slack_command_handler: Optional[SlackCommandHandler] = None
+discord_client: Optional[DiscordClient] = None
+discord_command_handler: Optional[DiscordCommandHandler] = None
 
 
 @asynccontextmanager
@@ -52,6 +56,7 @@ async def lifespan(app: FastAPI):
     global mcp_handler, n8n_client
     global slack_client, slack_handler, generic_handler, automation_handler
     global command_router, slack_command_handler
+    global discord_client, discord_command_handler
 
     logger.info("Initializing webhook handler...")
 
@@ -109,6 +114,20 @@ async def lifespan(app: FastAPI):
         logger.info("Slack integration enabled (events + slash commands)")
     else:
         logger.info("Slack integration disabled (no SLACK_BOT_TOKEN)")
+
+    # Discord client (only if configured)
+    if settings.discord_public_key:
+        discord_client = DiscordClient(
+            application_id=settings.discord_application_id,
+            bot_token=settings.discord_bot_token,
+        )
+        discord_command_handler = DiscordCommandHandler(
+            discord_client=discord_client,
+            command_router=command_router,
+        )
+        logger.info("Discord slash commands enabled")
+    else:
+        logger.info("Discord integration disabled (no DISCORD_PUBLIC_KEY)")
 
     # Generic handler
     generic_handler = GenericWebhookHandler(
@@ -338,6 +357,46 @@ async def slack_commands_webhook(
     logger.info(f"Slack slash command: {form_data.get('command')} {form_data.get('text', '')}")
 
     result = await slack_command_handler.handle_command(form_data)
+    return JSONResponse(content=result, status_code=200)
+
+
+@app.post("/webhook/discord")
+async def discord_webhook(
+    request: Request,
+    x_signature_ed25519: str = Header(None, alias="X-Signature-Ed25519"),
+    x_signature_timestamp: str = Header(None, alias="X-Signature-Timestamp"),
+):
+    """
+    Handle Discord interaction webhooks (/aiui slash command).
+
+    Verifies Ed25519 signature, responds to PINGs, and processes
+    application commands with deferred responses.
+    """
+    if not discord_command_handler:
+        raise HTTPException(status_code=503, detail="Discord integration not configured")
+
+    body = await request.body()
+
+    # Verify Discord Ed25519 signature
+    if not x_signature_ed25519 or not x_signature_timestamp:
+        raise HTTPException(status_code=401, detail="Missing Discord signature headers")
+
+    if not verify_discord_signature(
+        body=body,
+        signature=x_signature_ed25519,
+        timestamp=x_signature_timestamp,
+        public_key=settings.discord_public_key,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Discord signature")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    logger.info(f"Discord interaction type: {payload.get('type')}")
+
+    result = await discord_command_handler.handle_interaction(payload)
     return JSONResponse(content=result, status_code=200)
 
 

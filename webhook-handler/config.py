@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
 
+    # Discord
+    discord_application_id: str = ""
+    discord_public_key: str = ""
+    discord_bot_token: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = False
