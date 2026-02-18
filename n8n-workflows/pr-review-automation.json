@@ -49,7 +49,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://open-webui:8080/api/chat/completions",
+        "url": "https://ai-ui.coolestdomain.win/api/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

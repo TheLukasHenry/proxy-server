@@ -70,13 +70,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://open-webui:8080/api/chat/completions",
+        "url": "https://ai-ui.coolestdomain.win/api/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImI3OTRiYmQ1LTE1MWMtNGQ3MC1iMmNiLThmZDZiMWJlODUxZCIsImV4cCI6MTc3MTkyMjM2MiwianRpIjoiMDg2OWM0ZDAtMjg3MS00Njg0LThmNzgtM2I3MWUwYTgwMjBkIn0.rwisATi4mdCSK3vZQEPV3YIvxQrkA3ra4H6L8CejlOM"
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
             }
           ]
         },

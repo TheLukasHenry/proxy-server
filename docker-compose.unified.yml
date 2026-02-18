@@ -108,7 +108,7 @@ services:
       - MCP_USER_EMAIL=webhook-handler@system
       - MCP_USER_GROUPS=MCP-Admin
       - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
-      - N8N_URL=http://n8n:5678
+      - N8N_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
@@ -116,7 +116,6 @@ services:
       - backend
     depends_on:
       - open-webui
-      - n8n
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/health')"]
       interval: 30s
