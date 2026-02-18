@@ -1,20 +1,22 @@
 # WEBHOOK ARCHITECTURE - Complete Explanation
 
+**Last Updated:** 2026-02-18
+
 ## What is a Webhook?
 
-**Normal API:** You ask for data → Server responds
+**Normal API:** You ask for data -> Server responds
 ```
-YOU  ───────►  SERVER
+YOU  --------->  SERVER
      "Give me data"
 
-YOU  ◄───────  SERVER
+YOU  <---------  SERVER
      "Here's data"
 ```
 
 **Webhook (Reverse):** Server tells YOU when something happens
 ```
-GITHUB  ───────►  YOUR SERVER
-        "Hey! Someone created an issue!"
+GITHUB  --------->  YOUR SERVER
+        "Hey! Someone created a PR!"
 ```
 
 **Simple analogy:**
@@ -23,100 +25,149 @@ GITHUB  ───────►  YOUR SERVER
 
 ---
 
-## Our Webhook System Architecture
+## All Webhook Endpoints
+
+The webhook-handler service runs on port 8086 and handles events from multiple sources.
+
+| Endpoint | Source | What It Does |
+|---|---|---|
+| `/webhook/github` | GitHub | Receives push/PR/issue events, triggers n8n workflows for AI review |
+| `/webhook/slack` | Slack Events API | Receives @mentions and DMs, sends AI responses back |
+| `/webhook/slack/commands` | Slack Slash Commands | Handles `/aiui ask\|workflow\|status` commands |
+| `/webhook/discord` | Discord Interactions | Handles `/aiui` slash commands from Discord |
+| `/webhook/n8n/{path}` | Any (forwarding) | Forwards JSON payload to an n8n workflow webhook node |
+| `/webhook/mcp/{server}/{tool}` | Any | Executes an MCP tool directly (e.g., create GitHub issue) |
+| `/webhook/automation` | Any | AI + MCP tool execution via pipe function |
+| `/webhook/generic` | Any | Send any JSON, get AI analysis back |
+
+---
+
+## Flow 1: GitHub PR -> AI Code Review
+
+This is the main automation flow. When someone creates a PR, the AI reviews the code and posts a comment.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                             │
-│   STEP 1: Someone creates an issue on GitHub                                │
-│                                                                             │
-│   ┌──────────────────────────────────────────┐                              │
-│   │         GITHUB.COM                        │                              │
-│   │                                           │                              │
-│   │   User clicks "New Issue"                 │                              │
-│   │   Title: "Login button broken"            │                              │
-│   │   Body: "When I click login..."           │                              │
-│   │                                           │                              │
-│   └──────────────────┬───────────────────────┘                              │
-│                      │                                                       │
-│                      │ GitHub sends POST request automatically               │
-│                      │ to YOUR webhook URL                                   │
-│                      ▼                                                       │
-│   ┌──────────────────────────────────────────┐                              │
-│   │   STEP 2: Caddy receives request          │                              │
-│   │                                           │                              │
-│   │   URL: https://ai-ui.coolestdomain.win    │                              │
-│   │        /webhook/github                    │                              │
-│   │                                           │                              │
-│   │   Routes to → webhook-handler:8086        │                              │
-│   └──────────────────┬───────────────────────┘                              │
-│                      │                                                       │
-│                      ▼                                                       │
-│   ┌──────────────────────────────────────────┐                              │
-│   │   STEP 3: webhook-handler/main.py         │                              │
-│   │                                           │                              │
-│   │   1. Verify signature (is it real GitHub?)│                              │
-│   │   2. Parse JSON payload                   │                              │
-│   │   3. Check event type = "issues"          │                              │
-│   │   4. Check action = "opened"              │                              │
-│   │                                           │                              │
-│   └──────────────────┬───────────────────────┘                              │
-│                      │                                                       │
-│                      ▼                                                       │
-│   ┌──────────────────────────────────────────┐                              │
-│   │   STEP 4: handlers/github.py              │                              │
-│   │                                           │                              │
-│   │   Extract from payload:                   │                              │
-│   │   - issue_number: 123                     │                              │
-│   │   - title: "Login button broken"          │                              │
-│   │   - body: "When I click login..."         │                              │
-│   │   - repo: "TheLukasHenry/proxy-server"    │                              │
-│   │                                           │                              │
-│   └──────────────────┬───────────────────────┘                              │
-│                      │                                                       │
-│                      ▼                                                       │
-│   ┌──────────────────────────────────────────┐                              │
-│   │   STEP 5: clients/openwebui.py            │                              │
-│   │                                           │                              │
-│   │   Call Open WebUI AI:                     │                              │
-│   │   POST http://open-webui:8080             │                              │
-│   │        /api/chat/completions              │                              │
-│   │                                           │                              │
-│   │   {                                       │                              │
-│   │     "model": "gpt-5",                     │                              │
-│   │     "messages": [                         │                              │
-│   │       {"role": "system", "content":       │                              │
-│   │        "You analyze GitHub issues..."},   │                              │
-│   │       {"role": "user", "content":         │                              │
-│   │        "Analyze: Login button broken..."}  │                              │
-│   │     ]                                     │                              │
-│   │   }                                       │                              │
-│   │                                           │                              │
-│   │   AI Response: "This appears to be a      │                              │
-│   │   CSS issue. Check the button styles..."  │                              │
-│   │                                           │                              │
-│   └──────────────────┬───────────────────────┘                              │
-│                      │                                                       │
-│                      ▼                                                       │
-│   ┌──────────────────────────────────────────┐                              │
-│   │   STEP 6: clients/github.py               │                              │
-│   │                                           │                              │
-│   │   Post comment to GitHub:                 │                              │
-│   │   POST https://api.github.com/repos/      │                              │
-│   │        TheLukasHenry/proxy-server/        │                              │
-│   │        issues/123/comments                │                              │
-│   │                                           │                              │
-│   │   {                                       │                              │
-│   │     "body": "🤖 **AI Analysis**\n\n       │                              │
-│   │      This appears to be a CSS issue..."   │                              │
-│   │   }                                       │                              │
-│   │                                           │                              │
-│   └──────────────────────────────────────────┘                              │
-│                                                                             │
-│   RESULT: GitHub issue now has AI comment!                                  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+  STEP 1: Developer creates a Pull Request on GitHub
+
+  +-----------------------------------------+
+  |         GITHUB.COM                       |
+  |                                          |
+  |   Developer creates PR #42              |
+  |   Title: "Add user auth"                |
+  |   Changed files: auth.py, tests.py      |
+  +------------------+-----------------------+
+                     |
+                     | GitHub sends POST request automatically
+                     | to YOUR webhook URL
+                     v
+  +-----------------------------------------+
+  |   STEP 2: Caddy receives request         |
+  |                                          |
+  |   URL: https://ai-ui.coolestdomain.win   |
+  |        /webhook/github                   |
+  |                                          |
+  |   Routes to -> webhook-handler:8086      |
+  +------------------+-----------------------+
+                     |
+                     v
+  +-----------------------------------------+
+  |   STEP 3: webhook-handler/main.py        |
+  |                                          |
+  |   1. Verify HMAC-SHA256 signature        |
+  |   2. Parse JSON payload                  |
+  |   3. Check event type = "pull_request"   |
+  |   4. Forward to n8n workflow             |
+  +------------------+-----------------------+
+                     |
+                     v
+  +-----------------------------------------+
+  |   STEP 4: n8n "PR Review Automation"     |
+  |   (6-node workflow on hosted n8n)        |
+  |                                          |
+  |   1. Receive webhook data                |
+  |   2. Extract PR details (title, diff)    |
+  |   3. Send to AI via HTTP Request         |
+  |   4. AI analyzes code changes            |
+  |   5. Post review comment on GitHub PR    |
+  |   6. Notify Slack channel                |
+  +------------------------------------------+
+
+  RESULT: PR has AI review comment + Slack notification!
 ```
+
+---
+
+## Flow 2: Slash Commands (/aiui)
+
+Users can interact with the system from Slack or Discord using `/aiui` commands.
+
+```
+  SLACK                                      DISCORD
+  +------------------+                       +------------------+
+  | User types:      |                       | User types:      |
+  | /aiui ask what   |                       | /aiui ask what   |
+  |   is MCP?        |                       |   is MCP?        |
+  +--------+---------+                       +--------+---------+
+           |                                          |
+           | form-encoded POST                        | JSON POST
+           | /webhook/slack/commands                   | /webhook/discord
+           v                                          v
+  +--------+---------+                       +--------+---------+
+  | Verify Slack     |                       | Verify Ed25519   |
+  | HMAC signature   |                       | signature        |
+  +--------+---------+                       +--------+---------+
+           |                                          |
+           +------------------+  +--------------------+
+                              |  |
+                              v  v
+                    +---------+--+---------+
+                    |   CommandRouter       |
+                    |   (shared, platform-  |
+                    |    agnostic)          |
+                    |                      |
+                    |   Subcommands:       |
+                    |   - ask <question>   |
+                    |   - workflow <name>  |
+                    |   - status           |
+                    |   - help             |
+                    +----------+-----------+
+                               |
+                    +----------+-----------+
+                    |                      |
+                    v                      v
+          +--------+-------+    +---------+-------+
+          | "ask" command  |    | "workflow" cmd   |
+          | -> Open WebUI  |    | -> n8n workflow  |
+          |    AI chat     |    |    trigger       |
+          +--------+-------+    +---------+-------+
+                   |                      |
+                   v                      v
+          Reply sent back via      Workflow result
+          response_url (Slack)     sent back to user
+          or edit_original (Discord)
+```
+
+**Available commands:**
+- `/aiui ask <question>` -- Ask the AI anything
+- `/aiui workflow <name>` -- Trigger an n8n workflow
+- `/aiui status` -- Check health of all services
+- `/aiui help` -- Show available commands
+
+---
+
+## Flow 3: Scheduled Jobs (Cron)
+
+APScheduler runs background tasks on a schedule:
+
+| Job | When | What |
+|---|---|---|
+| `daily_health_report` | Every day at noon | Checks health of Open WebUI, MCP Proxy, n8n, webhook-handler |
+| `hourly_n8n_check` | Every hour | Lists all n8n workflows and their active/inactive status |
+
+You can also trigger these manually:
+- `GET /scheduler/health-report` -- Run health check now
+- `GET /scheduler/n8n-check` -- Run n8n check now
+- `POST /scheduler/jobs/{job_id}/trigger` -- Trigger any job
 
 ---
 
@@ -124,166 +175,122 @@ GITHUB  ───────►  YOUR SERVER
 
 ```
 webhook-handler/
-│
-├── main.py                 ← ENTRY POINT
-│   │                         - FastAPI app
-│   │                         - /health endpoint (GET)
-│   │                         - /webhook/github endpoint (POST)
-│   │                         - Verifies GitHub signature
-│   │
-├── config.py               ← SETTINGS
-│   │                         - Loads from .env file
-│   │                         - GITHUB_TOKEN
-│   │                         - GITHUB_WEBHOOK_SECRET
-│   │                         - OPENWEBUI_API_KEY
-│   │                         - AI_MODEL (gpt-5)
-│   │
-├── handlers/
-│   └── github.py           ← EVENT HANDLER
-│       │                     - Receives "issues.opened" event
-│       │                     - Extracts title, body, labels
-│       │                     - Calls OpenWebUI for AI analysis
-│       │                     - Calls GitHub to post comment
-│       │
-├── clients/
-│   ├── openwebui.py        ← TALKS TO AI
-│   │   │                     - POST /api/chat/completions
-│   │   │                     - Sends issue details
-│   │   │                     - Returns AI analysis
-│   │   │
-│   └── github.py           ← TALKS TO GITHUB
-│       │                     - Verifies webhook signatures
-│       │                     - Posts comments on issues
-│       │
-├── Dockerfile              ← CONTAINER
-│   │                         - Python 3.11
-│   │                         - Runs on port 8086
-│   │
-└── requirements.txt        ← DEPENDENCIES
-                              - fastapi
-                              - httpx
-                              - pydantic-settings
-```
-
----
-
-## Data Flow (What Gets Sent Where)
-
-### 1. GitHub → Webhook Handler
-```json
-{
-  "action": "opened",
-  "issue": {
-    "number": 123,
-    "title": "Login button broken",
-    "body": "When I click login, nothing happens",
-    "labels": [{"name": "bug"}]
-  },
-  "repository": {
-    "full_name": "TheLukasHenry/proxy-server"
-  }
-}
-```
-
-### 2. Webhook Handler → Open WebUI
-```json
-{
-  "model": "gpt-5",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You analyze GitHub issues and suggest solutions."
-    },
-    {
-      "role": "user",
-      "content": "Analyze this issue:\n\nTitle: Login button broken\n\nDescription: When I click login..."
-    }
-  ]
-}
-```
-
-### 3. Open WebUI → Webhook Handler
-```json
-{
-  "choices": [{
-    "message": {
-      "content": "This appears to be a JavaScript event binding issue..."
-    }
-  }]
-}
-```
-
-### 4. Webhook Handler → GitHub
-```json
-{
-  "body": "🤖 **AI Analysis**\n\nThis appears to be a JavaScript event binding issue...\n\n---\n*Generated by Open WebUI AI Assistant*"
-}
-```
-
----
-
-## Required Environment Variables
-
-| Variable | Purpose | Where Used |
-|----------|---------|------------|
-| `GITHUB_WEBHOOK_SECRET` | Verify request is really from GitHub | `main.py` signature check |
-| `GITHUB_TOKEN` | Post comments to GitHub | `clients/github.py` API calls |
-| `OPENWEBUI_API_KEY` | Authenticate with Open WebUI | `clients/openwebui.py` API calls |
-| `AI_MODEL` | Which AI model to use | `handlers/github.py` → gpt-5 |
-
----
-
-## Docker Compose Configuration
-
-```yaml
-webhook-handler:
-  build: ./webhook-handler
-  container_name: webhook-handler
-  restart: unless-stopped
-  ports:
-    - "8086:8086"
-  environment:
-    - PORT=8086
-    - DEBUG=${DEBUG:-false}
-    - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-    - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-    - OPENWEBUI_URL=http://open-webui:8080
-    - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
-    - AI_MODEL=${AI_MODEL:-gpt-5}
-  networks:
-    - backend
-  depends_on:
-    - open-webui
-```
-
----
-
-## Caddy Route Configuration
-
-```
-handle /webhook/* {
-    reverse_proxy webhook-handler:8086 {
-        header_down Cache-Control "no-store, no-cache, must-revalidate"
-    }
-}
+|
++-- main.py                    <- ENTRY POINT
+|   |                             FastAPI app, 14 endpoints
+|   |                             Initializes all clients on startup
+|
++-- config.py                  <- SETTINGS
+|   |                             Loads from .env (21 variables)
+|   |                             GitHub, Slack, Discord, n8n, MCP, AI
+|
++-- handlers/
+|   +-- commands.py            <- COMMAND ROUTER (shared by Slack + Discord)
+|   |                             parse_command() -> (subcommand, arguments)
+|   |                             Subcommands: ask, workflow, status, help
+|   |
+|   +-- github.py              <- GITHUB EVENT HANDLER
+|   |                             PR events -> n8n workflow trigger
+|   |                             Issue events -> AI analysis + comment
+|   |
+|   +-- slack.py               <- SLACK EVENTS HANDLER
+|   |                             @mentions -> AI response
+|   |                             DMs -> AI response
+|   |
+|   +-- slack_commands.py      <- SLACK SLASH COMMANDS
+|   |                             /aiui -> ACK + background processing
+|   |                             Posts result to response_url
+|   |
+|   +-- discord_commands.py    <- DISCORD SLASH COMMANDS
+|   |                             /aiui -> deferred response
+|   |                             Edits original message with result
+|   |
+|   +-- mcp.py                 <- MCP TOOL EXECUTOR
+|   |                             Direct tool execution via webhook
+|   |
+|   +-- automation.py          <- AUTOMATION PIPE
+|   |                             AI + MCP tools via pipe function
+|   |
+|   +-- generic.py             <- GENERIC HANDLER
+|                                 Any JSON -> AI analysis
+|
++-- clients/
+|   +-- openwebui.py           <- TALKS TO AI (chat completions)
+|   +-- github.py              <- TALKS TO GITHUB (comments, PRs)
+|   +-- slack.py               <- TALKS TO SLACK (messages, response_url)
+|   +-- discord.py             <- TALKS TO DISCORD (followup, edit)
+|   +-- n8n.py                 <- TALKS TO N8N (trigger workflows, list)
+|   +-- mcp_proxy.py           <- TALKS TO MCP PROXY (execute tools)
+|
++-- scheduler.py               <- CRON JOBS (APScheduler)
+|                                 daily_health_report, hourly_n8n_check
+|
++-- Dockerfile                 <- CONTAINER (Python 3.11, port 8086)
++-- requirements.txt           <- DEPENDENCIES (fastapi, httpx, PyNaCl, etc.)
 ```
 
 ---
 
 ## Security: Signature Verification
 
-GitHub signs every webhook request with HMAC-SHA256. We verify it to ensure the request is legitimate.
+Every external webhook is verified before processing:
 
-```python
-def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool:
-    expected = 'sha256=' + hmac.new(
-        secret.encode(),      # GITHUB_WEBHOOK_SECRET from .env
-        payload,              # Raw request body
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(expected, signature)
+**GitHub** -- HMAC-SHA256:
 ```
+Header: X-Hub-Signature-256
+Secret: GITHUB_WEBHOOK_SECRET
+Algorithm: sha256=HMAC(secret, body)
+```
+
+**Slack** -- HMAC-SHA256 (v0 format):
+```
+Headers: X-Slack-Request-Timestamp, X-Slack-Signature
+Secret: SLACK_SIGNING_SECRET
+Algorithm: v0=HMAC(secret, "v0:{timestamp}:{body}")
+Used by: /webhook/slack AND /webhook/slack/commands
+```
+
+**Discord** -- Ed25519:
+```
+Headers: X-Signature-Ed25519, X-Signature-Timestamp
+Secret: DISCORD_PUBLIC_KEY
+Algorithm: Ed25519 verify(public_key, timestamp+body, signature)
+Library: PyNaCl
+```
+
+---
+
+## Required Environment Variables
+
+| Variable | Purpose | Used By |
+|---|---|---|
+| `GITHUB_WEBHOOK_SECRET` | Verify GitHub webhook signatures | `/webhook/github` |
+| `GITHUB_TOKEN` | Post comments/reviews on GitHub | GitHub client |
+| `OPENWEBUI_API_KEY` | Authenticate with Open WebUI | AI chat completions |
+| `AI_MODEL` | Which AI model to use (default: gpt-4-turbo) | All AI handlers |
+| `SLACK_BOT_TOKEN` | Send messages to Slack | Slack client |
+| `SLACK_SIGNING_SECRET` | Verify Slack webhook signatures | `/webhook/slack`, `/webhook/slack/commands` |
+| `DISCORD_APPLICATION_ID` | Discord app identifier | Discord client |
+| `DISCORD_PUBLIC_KEY` | Verify Discord signatures | `/webhook/discord` |
+| `DISCORD_BOT_TOKEN` | Send messages to Discord | Discord client |
+| `N8N_URL` | n8n base URL (default: hosted instance) | n8n client |
+| `N8N_API_KEY` | n8n API authentication | n8n workflow listing |
+| `MCP_PROXY_URL` | MCP Proxy base URL | MCP tool execution |
+
+---
+
+## n8n Integration
+
+The system uses a **hosted n8n instance** at `n8n.srv1041674.hstgr.cloud` (not the local Docker container) for workflow execution.
+
+**Active workflows:**
+
+| Workflow | Nodes | Trigger | What It Does |
+|---|---|---|---|
+| PR Review Automation | 6 | Webhook | PR data -> AI code review -> GitHub comment -> Slack notification |
+| GitHub Push Processor | 5 | Webhook | Push data -> commit summary -> Slack notification |
+
+**MCP n8n server** (`mcp-n8n` container) provides ~20 tools for managing n8n from chat: list workflows, create/activate/deactivate workflows, execute workflows, etc.
 
 ---
 
@@ -291,40 +298,20 @@ def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool
 
 **Traditional AI (one-way):**
 ```
-Human → AI → Response shown to human only
+Human -> AI -> Response shown to human only
 ```
 
-**Your Webhook System (two-way):**
+**This Webhook System (three-way):**
 ```
-External Event (GitHub) → AI → Action (posts comment back)
+External Event (GitHub/Slack/Discord) -> AI -> Action (comment, notify, trigger workflow)
+Slash Command (user-initiated)        -> AI -> Response + action
+Scheduled Job (time-based)            -> AI -> Report + notification
 ```
 
-This means your AI can:
-- Automatically respond to GitHub issues
-- Analyze bugs when they're reported
-- Suggest solutions without human intervention
-- Be triggered by ANY external system (Slack, Teams, etc.)
-
-**Lukas's vision:** "Most AI systems only let you trigger them. This lets external events trigger the AI and take action."
-
----
-
-## Setup Checklist
-
-- [ ] Merge PR #3 to main branch
-- [ ] Deploy to Hetzner server
-- [ ] Generate `OPENWEBUI_API_KEY` from Open WebUI Settings
-- [ ] Configure GitHub webhook in repository settings:
-  - URL: `https://ai-ui.coolestdomain.win/webhook/github`
-  - Secret: Same as `GITHUB_WEBHOOK_SECRET` in `.env`
-  - Events: Select "Issues"
-- [ ] Create test issue to verify it works
-
----
-
-## Future Enhancements
-
-1. **More GitHub Events:** Pull requests, comments, reviews
-2. **More Platforms:** Slack, Microsoft Teams, Discord
-3. **More Actions:** Create issues, assign labels, trigger workflows
-4. **Scheduled Triggers:** Daily reports, weekly summaries
+This means the AI can:
+- Automatically review PRs when they're created
+- Respond to questions from Slack or Discord
+- Trigger n8n workflows from chat commands
+- Check system health on a schedule
+- Execute any MCP tool via webhook
+- Be extended with new handlers without changing the core

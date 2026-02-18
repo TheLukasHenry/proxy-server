@@ -1,5 +1,7 @@
 # Architecture Guide
 
+**Last Updated:** 2026-02-18
+
 ## 1. System Overview
 
 ```
@@ -57,6 +59,7 @@
 | MCP Excel            | `mcp-excel`          | 8000          | --             | Spreadsheet generation               |
 | MCP Dashboard        | `mcp-dashboard`      | 8000          | --             | Executive dashboard generation       |
 | MCP Notion           | `mcp-notion`         | 8000          | --             | Notion workspace access              |
+| MCP n8n              | `mcp-n8n`            | 8000          | --             | n8n workflow management (via mcpo)   |
 
 The stack is a self-hosted AI platform built on Open WebUI, extended with MCP (Model Context Protocol) tool servers for enterprise integrations. All browser traffic enters through Caddy, which routes authenticated paths through the API Gateway for JWT validation and rate limiting before reaching backend services. The MCP Proxy unifies 30+ tool servers behind a single OpenAPI endpoint with multi-tenant access control, while the Webhook Handler processes external events from GitHub, Slack, and n8n workflows. PostgreSQL (with pgvector) serves as the shared database for Open WebUI, user-group mappings, and API analytics. Redis provides session management and caching.
 
@@ -271,8 +274,10 @@ POST /{server_id}_{tool_name}        -- Legacy flat format (deprecated)
 
 | Endpoint                                | Method | Purpose                                              |
 |-----------------------------------------|--------|------------------------------------------------------|
-| `/webhook/github`                       | POST   | GitHub webhook receiver                              |
-| `/webhook/slack`                        | POST   | Slack Events API receiver                            |
+| `/webhook/github`                       | POST   | GitHub webhook receiver (HMAC-SHA256 verified)       |
+| `/webhook/slack`                        | POST   | Slack Events API receiver (@mentions, DMs)           |
+| `/webhook/slack/commands`               | POST   | Slack slash commands (`/aiui ask\|workflow\|status`)  |
+| `/webhook/discord`                      | POST   | Discord slash commands (Ed25519 verified)             |
 | `/webhook/n8n/{workflow_path}`          | POST   | Forward payload to n8n workflow webhook node         |
 | `/webhook/mcp/{server_id}/{tool_name}`  | POST   | Execute MCP tool directly via webhook                |
 | `/webhook/automation`                   | POST   | AI + MCP + n8n automation pipe (query: `source`, `instructions`) |
@@ -295,14 +300,52 @@ POST /{server_id}_{tool_name}        -- Legacy flat format (deprecated)
 - Secret: `SLACK_SIGNING_SECRET` env var
 - Algorithm: HMAC-SHA256 of `v0:{timestamp}:{body}`
 - Also handles `url_verification` challenge responses.
+- Used by both `/webhook/slack` (Events API) and `/webhook/slack/commands` (slash commands).
+
+**Discord:**
+- Headers: `X-Signature-Ed25519`, `X-Signature-Timestamp`
+- Secret: `DISCORD_PUBLIC_KEY` env var
+- Algorithm: Ed25519 signature verification via PyNaCl
+- PING (type 1) must return PONG (type 1) or Discord disables the endpoint.
+
+### Slash Commands (CommandRouter)
+
+Both Slack and Discord use a shared `CommandRouter` (`handlers/commands.py`) for platform-agnostic command processing.
+
+**Pattern:** ACK immediately (< 3s) -> process in background via `asyncio.create_task()` -> send result via platform callback.
+
+| Subcommand | Usage | Description |
+|---|---|---|
+| `ask <question>` | `/aiui ask what is MCP?` | Sends question to AI via Open WebUI, returns response |
+| `workflow <name>` | `/aiui workflow pr-review` | Triggers n8n workflow by webhook path name |
+| `status` | `/aiui status` | Checks health of all services (Open WebUI, MCP Proxy, n8n, webhook-handler) |
+| `help` | `/aiui help` | Shows available commands |
+
+Unknown subcommands are treated as `ask` queries. Empty text defaults to `status`.
+
+**Slack flow:** Slack sends `application/x-www-form-urlencoded` -> `SlackCommandHandler` extracts `response_url` -> ACK with `{"text": "Processing..."}` -> background task -> result posted to `response_url`.
+
+**Discord flow:** Discord sends JSON -> `DiscordCommandHandler` returns deferred response (type 5) -> background task -> result posted via `PATCH /webhooks/{app_id}/{token}/messages/@original`.
 
 ### n8n Workflow Triggering
 
 The webhook handler triggers n8n workflows via `N8NClient`:
-- Base URL: `N8N_URL` (default `http://n8n:5678`)
-- The `/webhook/n8n/{workflow_path}` endpoint forwards the JSON payload to `n8n:5678/webhook/{workflow_path}`.
-- n8n's external webhook URL is set via `WEBHOOK_URL` env var (e.g., `https://ai-ui.coolestdomain.win/n8n/`).
-- Caddy strips the `/n8n` prefix before forwarding to n8n.
+- Base URL: `N8N_URL` (default `https://n8n.srv1041674.hstgr.cloud` — the hosted n8n instance)
+- The `/webhook/n8n/{workflow_path}` endpoint forwards the JSON payload to the n8n webhook node.
+- Both the webhook-handler and the MCP n8n server point to the same hosted n8n instance (no split-brain).
+- A local n8n container also runs in Docker Compose for Caddy-routed UI access, but workflow automation targets the hosted instance.
+
+**Active n8n Workflows (on hosted instance):**
+
+| Workflow | Trigger | What It Does |
+|---|---|---|
+| **PR Review Automation** | Webhook (6 nodes) | Receives PR data -> AI code review via HTTP Request -> posts review comment on GitHub PR |
+| **GitHub Push Processor** | Webhook (5 nodes) | Receives push data -> formats commit summary -> posts notification to Slack channel |
+
+**MCP n8n Server** (`mcp-n8n` container):
+- Provides ~20 tools for managing n8n workflows from chat (list, create, activate, execute, etc.)
+- Uses `czlonkowski/n8n-mcp` image wrapped with mcpo
+- Connected to hosted n8n via `N8N_API_KEY` and `N8N_API_URL` env vars
 
 ### APScheduler Cron Jobs
 
@@ -361,8 +404,8 @@ Layer 3: Rate Limiting
     Sliding window algorithm with in-memory storage.
     Static assets are exempt.
 
-Layer 4: HMAC Signature Verification
-    Webhook Handler verifies GitHub (SHA-256) and Slack (v0 signature) payloads.
+Layer 4: Signature Verification
+    Webhook Handler verifies GitHub (HMAC-SHA256), Slack (v0 HMAC), and Discord (Ed25519) payloads.
     Prevents forged webhook deliveries.
 
 Layer 5: Group-Based ACL
@@ -379,12 +422,34 @@ Layer 5: Group-Based ACL
 | TLS                       | Caddy             | All traffic                 | Connection refused (prod)   |
 | JWT validation            | API Gateway       | All gateway-proxied routes  | Empty user context          |
 | Rate limiting             | API Gateway       | Non-static routes           | `429 Too Many Requests`     |
-| HMAC verification         | Webhook Handler   | `/webhook/github`, `/webhook/slack` | `401 Unauthorized`   |
+| Signature verification    | Webhook Handler   | `/webhook/github`, `/webhook/slack`, `/webhook/discord` | `401 Unauthorized` |
 | Group-based ACL           | MCP Proxy         | All tool endpoints          | `403 Access Denied`         |
 
 ---
 
-## 8. Local vs Production
+## 8. Automation Patterns
+
+The system supports three complementary automation patterns:
+
+```
+1. EVENT-DRIVEN (webhooks)
+   GitHub push/PR  ──►  /webhook/github  ──►  n8n workflow  ──►  AI review + GitHub comment + Slack notification
+   Slack @mention   ──►  /webhook/slack   ──►  AI response  ──►  Slack reply
+
+2. CHAT-DRIVEN (slash commands)
+   User types /aiui ask|workflow|status  ──►  CommandRouter  ──►  AI response / n8n trigger / health check
+   Works from both Slack and Discord (same CommandRouter)
+
+3. SCHEDULED (cron)
+   APScheduler  ──►  daily_health_report()   ──►  checks all service endpoints (noon daily)
+   APScheduler  ──►  hourly_n8n_workflow_check() ──►  lists n8n workflows (every hour)
+```
+
+All three patterns can be combined — e.g., an end-of-day report could be triggered by a slash command (`/aiui report`) OR scheduled as a cron job, pulling data from GitHub commits + n8n executions and posting a summary to Slack.
+
+---
+
+## 9. Local vs Production
 
 ### What Changes
 
