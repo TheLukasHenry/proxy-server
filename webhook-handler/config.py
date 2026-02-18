@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     automation_pipe_model: str = "webhook_automation.webhook-automation"
 
     # n8n
-    n8n_url: str = "http://n8n:5678"
+    n8n_url: str = "https://n8n.srv1041674.hstgr.cloud"
     n8n_api_key: str = ""
 
     # Slack
