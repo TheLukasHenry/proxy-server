@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     discord_public_key: str = ""
     discord_bot_token: str = ""
 
+    # Report
+    report_github_repo: str = "TheLukasHenry/proxy-server"
+    report_slack_channel: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = False

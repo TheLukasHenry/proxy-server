@@ -91,13 +91,6 @@ async def lifespan(app: FastAPI):
         ai_system_prompt=settings.ai_system_prompt
     )
 
-    # Shared command router (used by Slack + Discord slash commands)
-    command_router = CommandRouter(
-        openwebui_client=openwebui_client,
-        n8n_client=n8n_client,
-        ai_model=settings.ai_model,
-    )
-
     # Slack client (only if configured)
     if settings.slack_bot_token:
         slack_client = SlackClient(bot_token=settings.slack_bot_token)
@@ -107,13 +100,25 @@ async def lifespan(app: FastAPI):
             ai_model=settings.ai_model,
             ai_system_prompt=settings.ai_system_prompt
         )
+        logger.info("Slack integration enabled (events)")
+    else:
+        logger.info("Slack integration disabled (no SLACK_BOT_TOKEN)")
+
+    # Shared command router (used by Slack + Discord slash commands)
+    command_router = CommandRouter(
+        openwebui_client=openwebui_client,
+        n8n_client=n8n_client,
+        ai_model=settings.ai_model,
+        slack_client=slack_client,
+    )
+
+    # Wire Slack command handler if Slack is configured
+    if slack_client:
         slack_command_handler = SlackCommandHandler(
             slack_client=slack_client,
             command_router=command_router,
         )
-        logger.info("Slack integration enabled (events + slash commands)")
-    else:
-        logger.info("Slack integration disabled (no SLACK_BOT_TOKEN)")
+        logger.info("Slack slash commands enabled")
 
     # Discord client (only if configured)
     if settings.discord_public_key:
@@ -144,7 +149,10 @@ async def lifespan(app: FastAPI):
 
     # Scheduler
     init_scheduler()
-    register_default_jobs()
+    register_default_jobs(
+        slack_client=slack_client,
+        slack_channel=settings.report_slack_channel,
+    )
     start_scheduler()
 
     logger.info(f"Webhook handler ready on port {settings.port}")

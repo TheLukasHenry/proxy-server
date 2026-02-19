@@ -146,3 +146,42 @@ class GitHubClient:
         except Exception as e:
             logger.error(f"Error getting PR files: {e}")
             return None
+
+    async def get_commits_since(
+        self,
+        owner: str,
+        repo: str,
+        since: str,
+        until: str = "",
+        max_count: int = 50,
+    ) -> list[dict]:
+        """Get commits from a repo since a given ISO timestamp."""
+        url = f"{self.base_url}/repos/{owner}/{repo}/commits"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        params = {"since": since, "per_page": min(max_count, 100)}
+        if until:
+            params["until"] = until
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                commits = response.json()
+
+            return [
+                {
+                    "sha": c["sha"][:7],
+                    "author": c.get("commit", {}).get("author", {}).get("name", "unknown"),
+                    "message": c.get("commit", {}).get("message", "").split("\n")[0],
+                    "date": c.get("commit", {}).get("author", {}).get("date", ""),
+                }
+                for c in commits[:max_count]
+            ]
+
+        except Exception as e:
+            logger.error(f"Error fetching commits for {owner}/{repo}: {e}")
+            return []

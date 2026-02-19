@@ -102,3 +102,41 @@ class N8NClient:
         except Exception as e:
             logger.error(f"Error executing n8n workflow {workflow_id}: {e}")
             return None
+
+    async def get_recent_executions(self, limit: int = 50) -> list[dict]:
+        """Get recent workflow executions via the n8n API."""
+        if not self.api_key:
+            logger.warning("n8n API key not set — cannot fetch executions")
+            return []
+
+        url = f"{self.base_url}/api/v1/executions"
+        headers = {
+            "X-N8N-API-KEY": self.api_key,
+            "Accept": "application/json",
+        }
+        params = {"limit": limit}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            executions = data.get("data", data) if isinstance(data, dict) else data
+            if not isinstance(executions, list):
+                executions = []
+
+            return [
+                {
+                    "id": ex.get("id"),
+                    "workflow_name": ex.get("workflowData", {}).get("name", "unknown"),
+                    "status": ex.get("status", "unknown"),
+                    "started": ex.get("startedAt", ""),
+                    "finished": ex.get("stoppedAt", ""),
+                }
+                for ex in executions
+            ]
+
+        except Exception as e:
+            logger.error(f"Error fetching n8n executions: {e}")
+            return []

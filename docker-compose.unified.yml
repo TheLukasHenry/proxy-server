@@ -115,6 +115,8 @@ services:
       - DISCORD_APPLICATION_ID=${DISCORD_APPLICATION_ID:-}
       - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - REPORT_GITHUB_REPO=${REPORT_GITHUB_REPO:-TheLukasHenry/proxy-server}
+      - REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL:-}
     networks:
       - backend
     depends_on:

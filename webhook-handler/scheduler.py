@@ -150,12 +150,12 @@ async def _check_service_health(name: str, url: str, timeout: float = 10.0) -> d
         }
 
 
-async def daily_health_report():
+async def daily_health_report(slack_client=None, slack_channel: str = ""):
     """
     Daily health check of all services.
 
-    Runs at noon every day. Checks every registered service endpoint and
-    logs the results. If a Slack webhook URL is configured, posts there too.
+    Runs at noon every day. Checks every registered service endpoint,
+    logs the results, and posts to Slack if configured.
     """
     logger.info("=== Daily Health Report ===")
     results = []
@@ -168,6 +168,18 @@ async def daily_health_report():
     healthy = sum(1 for r in results if r["status"] == "healthy")
     total = len(results)
     logger.info(f"=== Health Report: {healthy}/{total} services healthy ===")
+
+    # Post to Slack if configured
+    if slack_client and slack_channel:
+        lines = [f"*Service Health Report* ({healthy}/{total} healthy)\n"]
+        for r in results:
+            emoji = "white_check_mark" if r["status"] == "healthy" else "x"
+            lines.append(f":{emoji}: {r['service']}: {r['status']}")
+        try:
+            await slack_client.post_message(channel=slack_channel, text="\n".join(lines))
+        except Exception as e:
+            logger.error(f"Failed to post health report to Slack: {e}")
+
     return results
 
 
@@ -220,7 +232,7 @@ async def hourly_n8n_workflow_check():
         return {"error": str(e)}
 
 
-def register_default_jobs():
+def register_default_jobs(slack_client=None, slack_channel: str = ""):
     """Register the built-in scheduled jobs."""
     if not scheduler:
         logger.error("Cannot register jobs: scheduler not initialized")
@@ -231,6 +243,8 @@ def register_default_jobs():
         func=daily_health_report,
         job_id="daily_health_report",
         cron_expression="0 12 * * *",
+        slack_client=slack_client,
+        slack_channel=slack_channel,
     )
 
     # Hourly n8n workflow status check (every hour at :00)
