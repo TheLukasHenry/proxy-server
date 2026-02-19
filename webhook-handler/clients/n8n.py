@@ -109,16 +109,31 @@ class N8NClient:
             logger.warning("n8n API key not set — cannot fetch executions")
             return []
 
-        url = f"{self.base_url}/api/v1/executions"
         headers = {
             "X-N8N-API-KEY": self.api_key,
             "Accept": "application/json",
         }
-        params = {"limit": limit}
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, headers=headers, params=params)
+                # Fetch workflow names for ID-to-name resolution
+                wf_resp = await client.get(
+                    f"{self.base_url}/api/v1/workflows",
+                    headers=headers,
+                )
+                wf_names = {}
+                if wf_resp.status_code == 200:
+                    wf_data = wf_resp.json()
+                    wf_list = wf_data.get("data", wf_data) if isinstance(wf_data, dict) else wf_data
+                    if isinstance(wf_list, list):
+                        wf_names = {w.get("id"): w.get("name", "unnamed") for w in wf_list}
+
+                # Fetch executions
+                response = await client.get(
+                    f"{self.base_url}/api/v1/executions",
+                    headers=headers,
+                    params={"limit": limit},
+                )
                 response.raise_for_status()
                 data = response.json()
 
@@ -129,7 +144,11 @@ class N8NClient:
             return [
                 {
                     "id": ex.get("id"),
-                    "workflow_name": ex.get("workflowData", {}).get("name", "unknown"),
+                    "workflow_name": (
+                        (ex.get("workflowData") or {}).get("name")
+                        or wf_names.get(ex.get("workflowId"))
+                        or f"workflow-{ex.get('workflowId', 'unknown')}"
+                    ),
                     "status": ex.get("status", "unknown"),
                     "started": ex.get("startedAt", ""),
                     "finished": ex.get("stoppedAt", ""),
