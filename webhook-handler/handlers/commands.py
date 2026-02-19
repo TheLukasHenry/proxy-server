@@ -185,8 +185,6 @@ class CommandRouter:
 
     async def _handle_report(self, ctx: CommandContext) -> None:
         """Generate an end-of-day report with AI summary."""
-        from clients.github import GitHubClient
-
         logger.info(f"[{ctx.platform}] report from {ctx.user_name}")
         await ctx.respond("Generating report... (gathering data from GitHub, n8n, and services)")
 
