@@ -12,7 +12,7 @@ class OpenWebUIClient:
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.timeout = 60.0  # 60 second timeout for AI responses
+        self.timeout = 120.0  # 120 second timeout for pipe function (4 phases)
 
     async def chat_completion(
         self,
@@ -64,6 +64,43 @@ class OpenWebUIClient:
         except Exception as e:
             logger.error(f"Error calling Open WebUI: {e}")
             return None
+
+    async def generate_deployment_notes(
+        self,
+        pr_details: dict,
+        model: str = "gpt-4-turbo",
+    ) -> Optional[str]:
+        """Generate deployment notes from PR details using AI."""
+        files_list = "\n".join(
+            f"- {f['filename']} ({f['status']}: +{f['additions']}/-{f['deletions']})"
+            for f in pr_details.get("files_changed", [])
+        )
+
+        prompt = (
+            f"Generate concise deployment notes for this merged pull request:\n\n"
+            f"PR #{pr_details['number']}: {pr_details['title']}\n"
+            f"Author: {pr_details['author']}\n"
+            f"Branch: {pr_details['branch']} -> {pr_details['base']}\n"
+            f"Merged: {pr_details.get('merged_at', 'unknown')}\n"
+            f"Files Changed: {pr_details.get('total_changes', 0)} lines "
+            f"across {len(pr_details.get('files_changed', []))} files\n\n"
+            f"Changed files:\n{files_list}\n\n"
+            f"Description:\n{pr_details.get('body') or 'No description provided.'}\n\n"
+            f"Format as:\n"
+            f"## Deployment Notes -- PR #{pr_details['number']}\n"
+            f"**Date:** [merge date]\n"
+            f"**What Changed:** [1-2 sentence summary]\n"
+            f"**Files Modified:** [bullet list of key files]\n"
+            f"**Impact:** [what users/systems are affected]\n"
+            f"**Rollback:** [how to revert if needed]\n"
+            f"**Testing:** [what was tested or needs testing]"
+        )
+
+        messages = [
+            {"role": "system", "content": "You are a deployment notes generator. Be concise and precise."},
+            {"role": "user", "content": prompt},
+        ]
+        return await self.chat_completion(messages=messages, model=model)
 
     async def analyze_github_issue(
         self,

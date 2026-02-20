@@ -66,8 +66,8 @@ services:
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       # Rate limiting
       - RATE_LIMIT_ENABLED=true
-      - RATE_LIMIT_PER_MINUTE=100
-      - RATE_LIMIT_PER_IP=1000
+      - RATE_LIMIT_PER_MINUTE=500
+      - RATE_LIMIT_PER_IP=5000
       # Analytics logging
       - ENABLE_API_ANALYTICS=true
       # Backend service URLs
@@ -107,10 +107,16 @@ services:
       - MCP_PROXY_URL=http://mcp-proxy:8000
       - MCP_USER_EMAIL=webhook-handler@system
       - MCP_USER_GROUPS=MCP-Admin
-      - N8N_URL=http://n8n:5678
+      - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
+      - N8N_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - DISCORD_APPLICATION_ID=${DISCORD_APPLICATION_ID:-}
+      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - REPORT_GITHUB_REPO=${REPORT_GITHUB_REPO:-TheLukasHenry/proxy-server}
+      - REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL:-}
     networks:
       - backend
     depends_on:
@@ -137,7 +143,13 @@ services:
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
-      - WEBHOOK_URL=https://ai-ui.coolestdomain.win/n8n/
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://ai-ui.coolestdomain.win/n8n/}
+      - N8N_RESTRICT_ENVIRONMENT_VARIABLES_ACCESS=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Secrets for n8n workflow nodes
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
@@ -158,6 +170,7 @@ services:
       # API GATEWAY MODE - Trust headers from gateway
       # =======================================================================
       - API_GATEWAY_MODE=true
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups,X-User-Admin
       # Database for permission lookups
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
@@ -169,6 +182,8 @@ services:
       - MCP_SONARQUBE_URL=http://mcp-sonarqube:8000
       - MCP_EXCEL_URL=http://mcp-excel:8000
       - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
+      - MCP_NOTION_URL=http://mcp-notion:8000
+      - MCP_N8N_URL=http://mcp-n8n:8000
       # API Keys
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -176,6 +191,9 @@ services:
       - TRELLO_API_KEY=${TRELLO_API_KEY:-}
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
       - SONARQUBE_URL=${SONARQUBE_URL:-}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - N8N_API_KEY=${N8N_API_KEY:-}
       # Meta-tools mode
       - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
       # Skip cache refresh on startup (faster boot)
@@ -186,7 +204,7 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -195,9 +213,11 @@ services:
   # OPEN WEBUI - AI Chat Interface
   # ===========================================================================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.8.3
     container_name: open-webui
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
     volumes:
       - open-webui-data:/app/backend/data
     environment:
@@ -382,6 +402,7 @@ services:
     environment:
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
       - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
+      - SONARQUBE_ORGANIZATION=${SONARQUBE_ORGANIZATION:-}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
@@ -399,6 +420,33 @@ services:
     build: ./mcp-servers/dashboard
     container_name: mcp-dashboard
     restart: unless-stopped
+    networks:
+      - backend
+
+  # Notion - Workspace and documentation
+  mcp-notion:
+    build: ./mcp-servers/notion
+    container_name: mcp-notion
+    restart: unless-stopped
+    environment:
+      - OPENAPI_MCP_HEADERS={"Authorization":"Bearer ${NOTION_API_KEY}","Notion-Version":"2022-06-28"}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+  # n8n MCP - AI-driven workflow creation and management (20 tools)
+  mcp-n8n:
+    build: ./mcp-servers/n8n
+    container_name: mcp-n8n
+    restart: unless-stopped
+    environment:
+      - MCP_MODE=stdio
+      - N8N_API_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      - LOG_LEVEL=error
+      - DISABLE_CONSOLE_OUTPUT=true
+      - N8N_MCP_TELEMETRY_DISABLED=true
     networks:
       - backend
 

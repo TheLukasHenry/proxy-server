@@ -10,7 +10,7 @@
       "type": "openapi",
       "description": "GitHub repository operations, issues, PRs, code search",
       "tier": "http",
-      "groups": ["MCP-Admin", "MCP-GitHub", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "groups": ["MCP-Admin", "MCP-GitHub", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp", "Test-Tenant"],
       "api_key_env": "GITHUB_TOKEN"
     },
     {
@@ -19,7 +19,7 @@
       "url": "http://mcp-proxy:8000/linear",
       "type": "openapi",
       "description": "Linear issue tracking and project management",
-      "tier": "http",
+      "tier": "mcp_http",
       "groups": ["MCP-Admin", "Tenant-Google"],
       "api_key_env": "LINEAR_API_KEY"
     },
@@ -29,7 +29,7 @@
       "url": "http://mcp-proxy:8000/notion",
       "type": "openapi",
       "description": "Notion knowledge base and documentation",
-      "tier": "http",
+      "tier": "local",
       "groups": ["MCP-Admin", "Tenant-Google", "Tenant-AcmeCorp"],
       "api_key_env": "NOTION_API_KEY"
     },
@@ -40,7 +40,7 @@
       "type": "openapi",
       "description": "Local filesystem operations (sandboxed)",
       "tier": "local",
-      "groups": ["MCP-Admin", "MCP-Filesystem", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "groups": ["MCP-Admin", "MCP-Filesystem", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp", "Test-Tenant"],
       "api_key_env": null
     },
     {
@@ -92,6 +92,16 @@
       "tier": "local",
       "groups": ["MCP-Admin", "MCP-Excel", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
       "api_key_env": null
+    },
+    {
+      "id": "n8n",
+      "name": "n8n Workflows MCP",
+      "url": "http://mcp-proxy:8000/n8n",
+      "type": "openapi",
+      "description": "AI-driven n8n workflow creation, management, and execution",
+      "tier": "local",
+      "groups": ["MCP-Admin"],
+      "api_key_env": "N8N_API_KEY"
     }
   ],
   "special_groups": {
@@ -112,6 +122,10 @@
     "Tenant-AcmeCorp": {
       "description": "AcmeCorp tenant - sales and support",
       "servers": ["notion", "filesystem", "slack", "hubspot"]
+    },
+    "Test-Tenant": {
+      "description": "Test tenant - limited access for isolation testing",
+      "servers": ["github", "filesystem"]
     }
   }
 }

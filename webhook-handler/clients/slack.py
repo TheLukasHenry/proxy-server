@@ -101,6 +101,46 @@ class SlackClient:
             logger.error(f"Error posting Slack message: {e}")
             return None
 
+    async def post_to_response_url(
+        self,
+        response_url: str,
+        text: str,
+        response_type: str = "ephemeral",
+        replace_original: bool = False,
+    ) -> bool:
+        """
+        Post to a Slack response_url (slash command / interaction callback).
+
+        The response_url is pre-authenticated — no Bearer token needed.
+
+        Args:
+            response_url: Slack-provided callback URL
+            text: Message text
+            response_type: "ephemeral" (visible to invoker) or "in_channel"
+            replace_original: Whether to replace the original message
+
+        Returns:
+            True if successful
+        """
+        payload = {
+            "text": text,
+            "response_type": response_type,
+            "replace_original": replace_original,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(response_url, json=payload)
+                if response.status_code == 200:
+                    logger.info(f"Posted to response_url ({response_type})")
+                    return True
+                else:
+                    logger.error(f"response_url error: {response.status_code} {response.text}")
+                    return False
+        except Exception as e:
+            logger.error(f"Error posting to response_url: {e}")
+            return False
+
     def format_ai_response(self, analysis: str) -> str:
         """Format AI analysis for Slack (uses mrkdwn)."""
         return f":robot_face: *AI Analysis*\n\n{analysis}"

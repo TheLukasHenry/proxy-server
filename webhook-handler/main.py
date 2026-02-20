@@ -11,11 +11,20 @@ from clients.github import GitHubClient, verify_github_signature
 from clients.mcp_proxy import MCPProxyClient
 from clients.n8n import N8NClient
 from clients.slack import SlackClient, verify_slack_signature
+from clients.discord import DiscordClient, verify_discord_signature
 from handlers.github import GitHubWebhookHandler
 from handlers.mcp import MCPWebhookHandler
 from handlers.slack import SlackWebhookHandler
 from handlers.generic import GenericWebhookHandler
-from scheduler import init_scheduler, start_scheduler, shutdown_scheduler, list_jobs
+from handlers.automation import AutomationWebhookHandler
+from handlers.commands import CommandRouter
+from handlers.slack_commands import SlackCommandHandler
+from handlers.discord_commands import DiscordCommandHandler
+from scheduler import (
+    init_scheduler, start_scheduler, shutdown_scheduler,
+    list_jobs, trigger_job, register_default_jobs,
+    daily_health_report, hourly_n8n_workflow_check,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +42,11 @@ n8n_client: Optional[N8NClient] = None
 slack_client: Optional[SlackClient] = None
 slack_handler: Optional[SlackWebhookHandler] = None
 generic_handler: Optional[GenericWebhookHandler] = None
+automation_handler: Optional[AutomationWebhookHandler] = None
+command_router: Optional[CommandRouter] = None
+slack_command_handler: Optional[SlackCommandHandler] = None
+discord_client: Optional[DiscordClient] = None
+discord_command_handler: Optional[DiscordCommandHandler] = None
 
 
 @asynccontextmanager
@@ -40,7 +54,9 @@ async def lifespan(app: FastAPI):
     """Initialize clients on startup."""
     global openwebui_client, github_client, github_handler
     global mcp_handler, n8n_client
-    global slack_client, slack_handler, generic_handler
+    global slack_client, slack_handler, generic_handler, automation_handler
+    global command_router, slack_command_handler
+    global discord_client, discord_command_handler
 
     logger.info("Initializing webhook handler...")
 
@@ -51,13 +67,6 @@ async def lifespan(app: FastAPI):
 
     github_client = GitHubClient(token=settings.github_token)
 
-    github_handler = GitHubWebhookHandler(
-        openwebui_client=openwebui_client,
-        github_client=github_client,
-        ai_model=settings.ai_model,
-        ai_system_prompt=settings.ai_system_prompt
-    )
-
     # MCP Proxy client
     mcp_client = MCPProxyClient(
         base_url=settings.mcp_proxy_url,
@@ -67,12 +76,20 @@ async def lifespan(app: FastAPI):
     mcp_handler = MCPWebhookHandler(mcp_client=mcp_client)
     logger.info(f"MCP Proxy URL: {settings.mcp_proxy_url}")
 
-    # n8n client
+    # n8n client (created before github_handler so it can be passed in)
     n8n_client = N8NClient(
         base_url=settings.n8n_url,
         api_key=settings.n8n_api_key
     )
     logger.info(f"n8n URL: {settings.n8n_url}")
+
+    github_handler = GitHubWebhookHandler(
+        openwebui_client=openwebui_client,
+        github_client=github_client,
+        n8n_client=n8n_client,
+        ai_model=settings.ai_model,
+        ai_system_prompt=settings.ai_system_prompt
+    )
 
     # Slack client (only if configured)
     if settings.slack_bot_token:
@@ -83,9 +100,39 @@ async def lifespan(app: FastAPI):
             ai_model=settings.ai_model,
             ai_system_prompt=settings.ai_system_prompt
         )
-        logger.info("Slack integration enabled")
+        logger.info("Slack integration enabled (events)")
     else:
         logger.info("Slack integration disabled (no SLACK_BOT_TOKEN)")
+
+    # Shared command router (used by Slack + Discord slash commands)
+    command_router = CommandRouter(
+        openwebui_client=openwebui_client,
+        n8n_client=n8n_client,
+        ai_model=settings.ai_model,
+        slack_client=slack_client,
+    )
+
+    # Wire Slack command handler if Slack is configured
+    if slack_client:
+        slack_command_handler = SlackCommandHandler(
+            slack_client=slack_client,
+            command_router=command_router,
+        )
+        logger.info("Slack slash commands enabled")
+
+    # Discord client (only if configured)
+    if settings.discord_public_key:
+        discord_client = DiscordClient(
+            application_id=settings.discord_application_id,
+            bot_token=settings.discord_bot_token,
+        )
+        discord_command_handler = DiscordCommandHandler(
+            discord_client=discord_client,
+            command_router=command_router,
+        )
+        logger.info("Discord slash commands enabled")
+    else:
+        logger.info("Discord integration disabled (no DISCORD_PUBLIC_KEY)")
 
     # Generic handler
     generic_handler = GenericWebhookHandler(
@@ -93,8 +140,19 @@ async def lifespan(app: FastAPI):
         ai_model=settings.ai_model
     )
 
+    # Automation handler (delegates to pipe function)
+    automation_handler = AutomationWebhookHandler(
+        openwebui_client=openwebui_client,
+        pipe_model=settings.automation_pipe_model
+    )
+    logger.info(f"Automation pipe model: {settings.automation_pipe_model}")
+
     # Scheduler
     init_scheduler()
+    register_default_jobs(
+        slack_client=slack_client,
+        slack_channel=settings.report_slack_channel,
+    )
     start_scheduler()
 
     logger.info(f"Webhook handler ready on port {settings.port}")
@@ -276,6 +334,80 @@ async def slack_webhook(
         return JSONResponse(content=result, status_code=500)
 
 
+@app.post("/webhook/slack/commands")
+async def slack_commands_webhook(
+    request: Request,
+    x_slack_request_timestamp: str = Header(None, alias="X-Slack-Request-Timestamp"),
+    x_slack_signature: str = Header(None, alias="X-Slack-Signature"),
+):
+    """
+    Handle Slack slash commands (/aiui).
+
+    Slack sends application/x-www-form-urlencoded (NOT JSON).
+    Must ACK within 3 seconds; actual processing happens in background.
+    """
+    if not slack_command_handler:
+        raise HTTPException(status_code=503, detail="Slack integration not configured")
+
+    body = await request.body()
+
+    # Verify Slack signature
+    if settings.slack_signing_secret:
+        if not verify_slack_signature(
+            body=body,
+            timestamp=x_slack_request_timestamp or "",
+            signature=x_slack_signature or "",
+            signing_secret=settings.slack_signing_secret,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    form_data = dict(await request.form())
+    logger.info(f"Slack slash command: {form_data.get('command')} {form_data.get('text', '')}")
+
+    result = await slack_command_handler.handle_command(form_data)
+    return JSONResponse(content=result, status_code=200)
+
+
+@app.post("/webhook/discord")
+async def discord_webhook(
+    request: Request,
+    x_signature_ed25519: str = Header(None, alias="X-Signature-Ed25519"),
+    x_signature_timestamp: str = Header(None, alias="X-Signature-Timestamp"),
+):
+    """
+    Handle Discord interaction webhooks (/aiui slash command).
+
+    Verifies Ed25519 signature, responds to PINGs, and processes
+    application commands with deferred responses.
+    """
+    if not discord_command_handler:
+        raise HTTPException(status_code=503, detail="Discord integration not configured")
+
+    body = await request.body()
+
+    # Verify Discord Ed25519 signature
+    if not x_signature_ed25519 or not x_signature_timestamp:
+        raise HTTPException(status_code=401, detail="Missing Discord signature headers")
+
+    if not verify_discord_signature(
+        body=body,
+        signature=x_signature_ed25519,
+        timestamp=x_signature_timestamp,
+        public_key=settings.discord_public_key,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Discord signature")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    logger.info(f"Discord interaction type: {payload.get('type')}")
+
+    result = await discord_command_handler.handle_interaction(payload)
+    return JSONResponse(content=result, status_code=200)
+
+
 @app.post("/webhook/generic")
 async def generic_webhook(request: Request):
     """
@@ -307,10 +439,84 @@ async def generic_webhook(request: Request):
         return JSONResponse(content=result, status_code=500)
 
 
+@app.post("/webhook/automation")
+async def automation_webhook(request: Request):
+    """
+    Handle automation webhook payloads.
+
+    Combines AI reasoning with MCP tool execution via the Webhook Automation
+    pipe function running inside Open WebUI.
+
+    Optional query params:
+    - source: Origin identifier (e.g., "github", "slack", "manual")
+    - instructions: Natural-language instructions for the AI
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    source = request.query_params.get("source", "webhook")
+    instructions = request.query_params.get("instructions", "")
+
+    result = await automation_handler.handle_request(
+        payload=payload,
+        source=source,
+        instructions=instructions,
+    )
+
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=500)
+
+
 @app.get("/webhook/scheduler/jobs")
-async def scheduler_jobs():
-    """List all scheduled jobs."""
+async def scheduler_jobs_legacy():
+    """List all scheduled jobs (legacy path)."""
     return {"jobs": list_jobs()}
+
+
+# ---------------------------------------------------------------------------
+# Scheduler API routes
+# ---------------------------------------------------------------------------
+
+@app.get("/scheduler/jobs")
+async def get_scheduler_jobs():
+    """List all scheduled jobs with details."""
+    return {"jobs": list_jobs(), "count": len(list_jobs())}
+
+
+@app.post("/scheduler/jobs/{job_id}/trigger")
+async def trigger_scheduler_job(job_id: str):
+    """Manually trigger a scheduled job to run immediately."""
+    result = trigger_job(job_id)
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=404)
+
+
+@app.get("/scheduler/health-report")
+async def run_health_report():
+    """Run the daily health report on demand and return results."""
+    results = await daily_health_report(
+        slack_client=slack_client,
+        slack_channel=settings.report_slack_channel,
+    )
+    healthy = sum(1 for r in results if r.get("status") == "healthy")
+    return {
+        "healthy": healthy,
+        "total": len(results),
+        "services": results,
+    }
+
+
+@app.get("/scheduler/n8n-check")
+async def run_n8n_check():
+    """Run the n8n workflow check on demand and return results."""
+    result = await hourly_n8n_workflow_check()
+    return result
 
 
 if __name__ == "__main__":

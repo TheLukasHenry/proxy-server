@@ -1,0 +1,204 @@
+{
+  "name": "PR Review Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pr-review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "pr-review",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.body.repo }}/pulls/{{ $json.body.pr_number }}/files",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-pr-diff",
+      "name": "Fetch PR Diff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ai-ui.coolestdomain.win/api/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-5', messages: [{ role: 'system', content: 'You are a senior code reviewer. Review this pull request diff. Focus on: bugs, security issues, performance concerns, code style, and suggestions. Be concise. Format as markdown.' }, { role: 'user', content: 'Review this Pull Request:\\n\\nTitle: ' + $('Webhook').item.json.body.title + '\\nAuthor: ' + $('Webhook').item.json.body.author + '\\nBase: ' + $('Webhook').item.json.body.base_branch + ' ← ' + $('Webhook').item.json.body.head_branch + '\\n\\nFiles changed:\\n' + ((Array.isArray($json) ? $json : []).map(f => '### ' + f.filename + '\\n```diff\\n' + (f.patch || 'Binary file') + '\\n```').join('\\n')).substring(0, 8000) }] }) }}",
+        "options": {}
+      },
+      "id": "ai-code-review",
+      "name": "AI Code Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Webhook').item.json.body.repo }}/issues/{{ $('Webhook').item.json.body.pr_number }}/comments",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '\\ud83e\\udd16 **AI Code Review**\\n\\n' + ($json.choices?.[0]?.message?.content || 'Review unavailable') + '\\n\\n---\\n*Automated review by n8n + Open WebUI*' }) }}",
+        "options": {}
+      },
+      "id": "post-github-comment",
+      "name": "Post GitHub Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: '#automation', text: '*PR Review Complete*\\n\\n*PR:* ' + $('Webhook').item.json.body.title + '\\n*Author:* ' + $('Webhook').item.json.body.author + '\\n*Repo:* ' + $('Webhook').item.json.body.repo + '\\n*Link:* ' + $('Webhook').item.json.body.html_url + '\\n\\n*AI Review Excerpt:*\\n' + ($('AI Code Review').item.json.choices?.[0]?.message?.content || 'Review unavailable').substring(0, 500) + '...' }) }}",
+        "options": {}
+      },
+      "id": "slack-notification",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 300],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch PR Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch PR Diff": {
+      "main": [
+        [
+          {
+            "node": "AI Code Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Code Review": {
+      "main": [
+        [
+          {
+            "node": "Post GitHub Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post GitHub Comment": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

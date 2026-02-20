@@ -28,13 +28,25 @@ class Settings(BaseSettings):
     mcp_user_email: str = "webhook-handler@system"
     mcp_user_groups: str = "MCP-Admin"
 
+    # Automation Pipe
+    automation_pipe_model: str = "webhook_automation.webhook-automation"
+
     # n8n
-    n8n_url: str = "http://n8n:5678"
+    n8n_url: str = "https://n8n.srv1041674.hstgr.cloud"
     n8n_api_key: str = ""
 
     # Slack
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
+
+    # Discord
+    discord_application_id: str = ""
+    discord_public_key: str = ""
+    discord_bot_token: str = ""
+
+    # Report
+    report_github_repo: str = "TheLukasHenry/proxy-server"
+    report_slack_channel: str = ""
 
     class Config:
         env_file = ".env"
@@ -42,3 +54,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_service_endpoints() -> dict[str, str]:
+    """Single source of truth for health check endpoints."""
+    return {
+        "open-webui": f"{settings.openwebui_url}/api/config",
+        "mcp-proxy": f"{settings.mcp_proxy_url}/health",
+        "n8n": f"{settings.n8n_url}/healthz",
+        "webhook-handler": "http://localhost:8086/health",
+    }
