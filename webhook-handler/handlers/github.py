@@ -122,12 +122,16 @@ class GitHubWebhookHandler:
     async def _handle_pull_request_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle pull request events — forward to n8n for automated review."""
         action = payload.get("action")
+        pr = payload.get("pull_request", {})
+
+        # Handle merged PRs — generate deployment notes
+        if action == "closed" and pr.get("merged", False):
+            return await self._handle_pr_merged(payload)
 
         if action not in ("opened", "synchronize"):
             logger.info(f"Ignoring PR action: {action}")
             return {"success": True, "message": f"PR action '{action}' not handled"}
 
-        pr = payload.get("pull_request", {})
         repo = payload.get("repository", {})
         repo_full_name = repo.get("full_name", "")
 
@@ -188,6 +192,51 @@ class GitHubWebhookHandler:
                 "error": "n8n client not configured",
                 "pr_number": pr_number,
             }
+
+    async def _handle_pr_merged(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Generate and post deployment notes when a PR is merged."""
+        pr = payload.get("pull_request", {})
+        repo = payload.get("repository", {})
+        repo_full_name = repo.get("full_name", "")
+
+        if "/" not in repo_full_name:
+            return {"success": False, "error": "Invalid repository name"}
+
+        owner, repo_name = repo_full_name.split("/", 1)
+        pr_number = pr.get("number")
+
+        logger.info(f"PR #{pr_number} merged in {owner}/{repo_name}, generating deployment notes")
+
+        # Fetch full PR details (files changed, etc.)
+        pr_details = await self.github.get_pr_details(owner, repo_name, pr_number)
+        if not pr_details:
+            logger.error(f"Could not fetch PR #{pr_number} details")
+            return {"success": False, "error": "Failed to fetch PR details"}
+
+        # Generate deployment notes via AI
+        notes = await self.openwebui.generate_deployment_notes(
+            pr_details=pr_details,
+            model=self.ai_model,
+        )
+        if not notes:
+            logger.error(f"Could not generate deployment notes for PR #{pr_number}")
+            return {"success": False, "error": "Failed to generate deployment notes"}
+
+        # Post as a comment on the PR
+        formatted = self.github.format_ai_response(notes)
+        comment_id = await self.github.post_issue_comment(owner, repo_name, pr_number, formatted)
+
+        if comment_id:
+            logger.info(f"Deployment notes posted to PR #{pr_number} (comment {comment_id})")
+            return {
+                "success": True,
+                "message": "Deployment notes posted",
+                "pr_number": pr_number,
+                "comment_id": comment_id,
+            }
+        else:
+            logger.error(f"Failed to post deployment notes to PR #{pr_number}")
+            return {"success": False, "error": "Failed to post deployment notes comment"}
 
     async def _handle_comment_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle issue_comment events (created)."""

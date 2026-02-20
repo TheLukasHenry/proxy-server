@@ -5,7 +5,7 @@ from typing import Optional, Callable, Any
 import httpx
 import logging
 
-from config import settings
+from config import settings, get_service_endpoints
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +122,7 @@ def trigger_job(job_id: str) -> dict:
 # Default scheduled jobs
 # ---------------------------------------------------------------------------
 
-SERVICE_ENDPOINTS = {
-    "open-webui": f"{settings.openwebui_url}/api/config",
-    "mcp-proxy": f"{settings.mcp_proxy_url}/health",
-    "n8n": f"{settings.n8n_url}/healthz",
-    "webhook-handler": "http://localhost:8086/health",
-}
+SERVICE_ENDPOINTS = get_service_endpoints()
 
 
 async def _check_service_health(name: str, url: str, timeout: float = 10.0) -> dict:

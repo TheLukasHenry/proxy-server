@@ -8,7 +8,7 @@ import logging
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
-from config import settings
+from config import settings, get_service_endpoints
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,7 @@ class CommandContext:
 
 
 # Health endpoints to check for the status command
-SERVICE_ENDPOINTS = {
-    "open-webui": f"{settings.openwebui_url}/api/config",
-    "mcp-proxy": f"{settings.mcp_proxy_url}/health",
-    "n8n": f"{settings.n8n_url}/healthz",
-    "webhook-handler": "http://localhost:8086/health",
-}
+SERVICE_ENDPOINTS = get_service_endpoints()
 
 
 class CommandRouter:

@@ -54,3 +54,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_service_endpoints() -> dict[str, str]:
+    """Single source of truth for health check endpoints."""
+    return {
+        "open-webui": f"{settings.openwebui_url}/api/config",
+        "mcp-proxy": f"{settings.mcp_proxy_url}/health",
+        "n8n": f"{settings.n8n_url}/healthz",
+        "webhook-handler": "http://localhost:8086/health",
+    }

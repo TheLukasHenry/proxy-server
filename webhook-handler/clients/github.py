@@ -147,6 +147,55 @@ class GitHubClient:
             logger.error(f"Error getting PR files: {e}")
             return None
 
+    async def get_pr_details(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> Optional[dict]:
+        """Fetch full PR details including title, body, and files changed."""
+        url = f"{self.base_url}/repos/{owner}/{repo}/pulls/{pr_number}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                pr = resp.json()
+
+                files_resp = await client.get(f"{url}/files", headers=headers)
+                files_resp.raise_for_status()
+                files = files_resp.json()
+
+                return {
+                    "number": pr["number"],
+                    "title": pr["title"],
+                    "body": pr.get("body", "") or "",
+                    "author": pr["user"]["login"],
+                    "branch": pr["head"]["ref"],
+                    "base": pr["base"]["ref"],
+                    "merged_at": pr.get("merged_at", ""),
+                    "files_changed": [
+                        {
+                            "filename": f["filename"],
+                            "status": f["status"],
+                            "additions": f["additions"],
+                            "deletions": f["deletions"],
+                        }
+                        for f in files
+                    ],
+                    "total_changes": sum(
+                        f["additions"] + f["deletions"] for f in files
+                    ),
+                }
+        except Exception as e:
+            logger.error(f"Failed to fetch PR details: {e}")
+            return None
+
     async def get_commits_since(
         self,
         owner: str,

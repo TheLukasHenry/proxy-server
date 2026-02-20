@@ -500,7 +500,10 @@ async def trigger_scheduler_job(job_id: str):
 @app.get("/scheduler/health-report")
 async def run_health_report():
     """Run the daily health report on demand and return results."""
-    results = await daily_health_report()
+    results = await daily_health_report(
+        slack_client=slack_client,
+        slack_channel=settings.report_slack_channel,
+    )
     healthy = sum(1 for r in results if r.get("status") == "healthy")
     return {
         "healthy": healthy,
