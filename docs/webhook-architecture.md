@@ -1,6 +1,6 @@
 # WEBHOOK ARCHITECTURE - Complete Explanation
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-19
 
 ## What is a Webhook?
 
@@ -128,6 +128,7 @@ Users can interact with the system from Slack or Discord using `/aiui` commands.
                     |   Subcommands:       |
                     |   - ask <question>   |
                     |   - workflow <name>  |
+                    |   - report           |
                     |   - status           |
                     |   - help             |
                     +----------+-----------+
@@ -150,6 +151,7 @@ Users can interact with the system from Slack or Discord using `/aiui` commands.
 **Available commands:**
 - `/aiui ask <question>` -- Ask the AI anything
 - `/aiui workflow <name>` -- Trigger an n8n workflow
+- `/aiui report` -- Generate end-of-day activity report (GitHub commits, n8n executions, health)
 - `/aiui status` -- Check health of all services
 - `/aiui help` -- Show available commands
 
@@ -161,7 +163,7 @@ APScheduler runs background tasks on a schedule:
 
 | Job | When | What |
 |---|---|---|
-| `daily_health_report` | Every day at noon | Checks health of Open WebUI, MCP Proxy, n8n, webhook-handler |
+| `daily_health_report` | Every day at noon | Checks health of Open WebUI, MCP Proxy, n8n, webhook-handler; posts to Slack if configured |
 | `hourly_n8n_check` | Every hour | Lists all n8n workflows and their active/inactive status |
 
 You can also trigger these manually:
@@ -274,8 +276,10 @@ Library: PyNaCl
 | `DISCORD_PUBLIC_KEY` | Verify Discord signatures | `/webhook/discord` |
 | `DISCORD_BOT_TOKEN` | Send messages to Discord | Discord client |
 | `N8N_URL` | n8n base URL (default: hosted instance) | n8n client |
-| `N8N_API_KEY` | n8n API authentication | n8n workflow listing |
+| `N8N_API_KEY` | n8n API authentication | n8n workflow listing, `/aiui report` |
 | `MCP_PROXY_URL` | MCP Proxy base URL | MCP tool execution |
+| `REPORT_GITHUB_REPO` | GitHub repo for daily report (e.g. `owner/repo`) | `/aiui report` |
+| `REPORT_SLACK_CHANNEL` | Slack channel ID to post reports to | `/aiui report`, scheduled reports |
 
 ---
 

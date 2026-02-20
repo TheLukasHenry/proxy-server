@@ -44,7 +44,12 @@ class N8NClient:
                 )
                 response.raise_for_status()
 
-                result = response.json()
+                # n8n webhooks may return empty body on success
+                text = response.text.strip()
+                if text:
+                    result = response.json()
+                else:
+                    result = {"status": "ok"}
                 logger.info(f"n8n workflow triggered: {webhook_path}")
                 return result
 
