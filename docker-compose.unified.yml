@@ -213,7 +213,7 @@ services:
   # OPEN WEBUI - AI Chat Interface
   # ===========================================================================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.8.3
     container_name: open-webui
     restart: unless-stopped
     ports:
