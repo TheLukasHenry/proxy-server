@@ -1,6 +1,6 @@
 # Architecture Overview
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-20
 **Canonical Reference:** [`docs/architecture-guide.md`](./architecture-guide.md)
 
 > This file is a quick-reference summary. For the full architecture documentation (Caddy routes, API Gateway auth flow, MCP Proxy multi-tenancy, webhook handler endpoints, security layers, etc.), see the **[Architecture Guide](./architecture-guide.md)**.
@@ -25,7 +25,7 @@ Browser → Cloudflare → Caddy (port 80) → API Gateway (8080) → Backend se
 |---|---|
 | Caddy | Reverse proxy, TLS termination |
 | API Gateway | JWT validation, rate limiting, header injection |
-| Open WebUI | AI chat interface |
+| Open WebUI | AI chat interface (v0.8.3 — Skills, Channels, Analytics) |
 | MCP Proxy | Multi-tenant tool orchestration (30+ tools) |
 | Admin Portal | User/group management UI |
 | Webhook Handler | External event processing (GitHub, Slack, Discord, n8n) |

@@ -1,6 +1,6 @@
 # Architecture Guide
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-20
 
 ## 1. System Overview
 
@@ -45,7 +45,7 @@
 | Caddy                | `caddy`              | 80, 443       | 80, 443        | Reverse proxy, TLS termination       |
 | API Gateway          | `api-gateway`        | 8080          | 8085           | JWT validation, rate limiting        |
 | MCP Proxy            | `mcp-proxy`          | 8000          | --             | Multi-tenant tool orchestration      |
-| Open WebUI           | `open-webui`         | 8080          | 127.0.0.1:3000 | AI chat interface                    |
+| Open WebUI           | `open-webui`         | 8080          | 127.0.0.1:3000 | AI chat interface (v0.8.3)           |
 | Admin Portal         | `admin-portal`       | 8080          | --             | User/group management UI             |
 | Webhook Handler      | `webhook-handler`    | 8086          | 8086           | External event ingestion             |
 | n8n                  | `n8n`                | 5678          | 5678           | Workflow automation engine           |
@@ -61,7 +61,22 @@
 | MCP Notion           | `mcp-notion`         | 8000          | --             | Notion workspace access              |
 | MCP n8n              | `mcp-n8n`            | 8000          | --             | n8n workflow management (via mcpo)   |
 
-The stack is a self-hosted AI platform built on Open WebUI, extended with MCP (Model Context Protocol) tool servers for enterprise integrations. All browser traffic enters through Caddy, which routes authenticated paths through the API Gateway for JWT validation and rate limiting before reaching backend services. The MCP Proxy unifies 30+ tool servers behind a single OpenAPI endpoint with multi-tenant access control, while the Webhook Handler processes external events from GitHub, Slack, and n8n workflows. PostgreSQL (with pgvector) serves as the shared database for Open WebUI, user-group mappings, and API analytics. Redis provides session management and caching.
+The stack is a self-hosted AI platform built on Open WebUI (v0.8.3), extended with MCP (Model Context Protocol) tool servers for enterprise integrations. All browser traffic enters through Caddy, which routes authenticated paths through the API Gateway for JWT validation and rate limiting before reaching backend services. The MCP Proxy unifies 30+ tool servers behind a single OpenAPI endpoint with multi-tenant access control, while the Webhook Handler processes external events from GitHub, Slack, and n8n workflows. PostgreSQL (with pgvector) serves as the shared database for Open WebUI, user-group mappings, and API analytics. Redis provides session management and caching.
+
+### Open WebUI v0.8.3 Features
+
+Upgraded from v0.7.2 on 2026-02-20. Key new capabilities:
+
+| Feature | Description |
+|---------|-------------|
+| **Skills** | Reusable AI instruction sets injected before LLM processing. Teach AI when/how to use MCP tools. Managed at `/workspace/skills`. |
+| **Channels** | Persistent topic-based chat rooms (Slack/Discord-like). Support `@model-name` mentions. Managed in sidebar. |
+| **Analytics** | Built-in admin dashboard for model usage, token counts, and user activity. At `/admin/analytics`. |
+| **Notes** | Personal note-taking feature integrated into the sidebar. |
+| **Prompt Version Control** | History, comparison, and rollback for prompts. |
+
+**Active Skills:** PR Security Review, Daily Report Builder, Project Status
+**Active Channels:** #general (public), #dev-notifications (public)
 
 ---
 
@@ -319,6 +334,7 @@ Both Slack and Discord use a shared `CommandRouter` (`handlers/commands.py`) for
 | `ask <question>` | `/aiui ask what is MCP?` | Sends question to AI via Open WebUI, returns response |
 | `workflow <name>` | `/aiui workflow pr-review` | Triggers n8n workflow by webhook path name |
 | `status` | `/aiui status` | Checks health of all services (Open WebUI, MCP Proxy, n8n, webhook-handler) |
+| `report` | `/aiui report` | Generates end-of-day report (GitHub commits, n8n executions, service health) with AI summary |
 | `help` | `/aiui help` | Shows available commands |
 
 Unknown subcommands are treated as `ask` queries. Empty text defaults to `status`.
@@ -441,11 +457,14 @@ The system supports three complementary automation patterns:
    Works from both Slack and Discord (same CommandRouter)
 
 3. SCHEDULED (cron)
-   APScheduler  ──►  daily_health_report()   ──►  checks all service endpoints (noon daily)
+   APScheduler  ──►  daily_health_report()   ──►  checks all service endpoints, posts to Slack (noon daily)
    APScheduler  ──►  hourly_n8n_workflow_check() ──►  lists n8n workflows (every hour)
+
+4. REPORTING (slash command + data aggregation)
+   /aiui report  ──►  CommandRouter  ──►  gathers GitHub commits + n8n executions + service health  ──►  AI summary  ──►  reply + optional Slack channel post
 ```
 
-All three patterns can be combined — e.g., an end-of-day report could be triggered by a slash command (`/aiui report`) OR scheduled as a cron job, pulling data from GitHub commits + n8n executions and posting a summary to Slack.
+All three patterns can be combined — e.g., the `/aiui report` command pulls today's GitHub commits (via `REPORT_GITHUB_REPO`), n8n workflow executions (via n8n API), and service health checks, then sends the raw data to AI for summarization and posts the result back to the user and optionally to a Slack channel (`REPORT_SLACK_CHANNEL`).
 
 ---
 
