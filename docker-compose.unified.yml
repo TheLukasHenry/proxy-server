@@ -49,6 +49,7 @@ services:
       timeout: 10s
       retries: 3
 
+
   # ===========================================================================
   # API GATEWAY - Centralized Auth & Rate Limiting
   # ===========================================================================
@@ -66,8 +67,8 @@ services:
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       # Rate limiting
       - RATE_LIMIT_ENABLED=true
-      - RATE_LIMIT_PER_MINUTE=100
-      - RATE_LIMIT_PER_IP=1000
+      - RATE_LIMIT_PER_MINUTE=500
+      - RATE_LIMIT_PER_IP=5000
       # Analytics logging
       - ENABLE_API_ANALYTICS=true
       # Backend service URLs
@@ -86,6 +87,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
 
   # ==========================================================================
   # Webhook Handler - External event processing
@@ -107,10 +109,20 @@ services:
       - MCP_PROXY_URL=http://mcp-proxy:8000
       - MCP_USER_EMAIL=webhook-handler@system
       - MCP_USER_GROUPS=MCP-Admin
-      - N8N_URL=http://n8n:5678
+      - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
+      - N8N_URL=${N8N_API_URL:-http://n8n:5678}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - DISCORD_APPLICATION_ID=${DISCORD_APPLICATION_ID:-}
+      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - DISCORD_ALERT_CHANNEL_ID=${DISCORD_ALERT_CHANNEL_ID:-}
+      - REPORT_GITHUB_REPO=${REPORT_GITHUB_REPO:-TheLukasHenry/proxy-server}
+      - REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL:-}
+      - PR_REVIEWER_URL=${PR_REVIEWER_URL:-http://pr-reviewer:3000}
+      - VOICE_WEBHOOK_SECRET=${VOICE_WEBHOOK_SECRET:-}
     networks:
       - backend
     depends_on:
@@ -120,6 +132,61 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+
+  # ===========================================================================
+  # VOICE BRIDGE - Discord Voice <-> ElevenLabs Conversational AI
+  # ===========================================================================
+  voice-bridge:
+    build: ./voice-bridge
+    container_name: voice-bridge
+    restart: unless-stopped
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
+      - WEBHOOK_HANDLER_URL=http://webhook-handler:8086
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - backend
+    depends_on:
+      - webhook-handler
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('ok')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+  # ===========================================================================
+  # CLAUDE ANALYZER - Claude Code Analysis (PR Review, BRE, Security, etc.)
+  # ===========================================================================
+  claude-analyzer:
+    build: ./claude-analyzer
+    container_name: claude-analyzer
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - analyzer-workspace:/workspace
+    networks:
+      backend:
+        aliases:
+          - pr-reviewer
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
 
   # ==========================================================================
   # n8n - Workflow Automation
@@ -137,11 +204,21 @@ services:
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
-      - WEBHOOK_URL=https://ai-ui.coolestdomain.win/n8n/
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://ai-ui.coolestdomain.win/n8n/}
+      - N8N_RESTRICT_ENVIRONMENT_VARIABLES_ACCESS=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Secrets for n8n workflow nodes
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - DISCORD_ALERT_CHANNEL_ID=${DISCORD_ALERT_CHANNEL_ID:-}
+      - OPENWEBUI_URL=http://open-webui:8080
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
       - backend
+
 
   # ===========================================================================
   # MCP PROXY - Multi-Tenant Tool Gateway
@@ -158,6 +235,7 @@ services:
       # API GATEWAY MODE - Trust headers from gateway
       # =======================================================================
       - API_GATEWAY_MODE=true
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups,X-User-Admin
       # Database for permission lookups
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
@@ -169,6 +247,9 @@ services:
       - MCP_SONARQUBE_URL=http://mcp-sonarqube:8000
       - MCP_EXCEL_URL=http://mcp-excel:8000
       - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
+      - MCP_NOTION_URL=http://mcp-notion:8000
+      - MCP_N8N_URL=http://mcp-n8n:8000
+      - MCP_SCHEDULER_URL=http://mcp-scheduler:8000
       # API Keys
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -176,6 +257,9 @@ services:
       - TRELLO_API_KEY=${TRELLO_API_KEY:-}
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-}
       - SONARQUBE_URL=${SONARQUBE_URL:-}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - N8N_API_KEY=${N8N_API_KEY:-}
       # Meta-tools mode
       - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
       # Skip cache refresh on startup (faster boot)
@@ -186,18 +270,21 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
+
 
   # ===========================================================================
   # OPEN WEBUI - AI Chat Interface
   # ===========================================================================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.8.3
     container_name: open-webui
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
     volumes:
       - open-webui-data:/app/backend/data
     environment:
@@ -205,8 +292,9 @@ services:
       # LLM Connections
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - ENABLE_OLLAMA_API=${ENABLE_OLLAMA_API:-false}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
+      # OpenAI + Pipelines (semicolon-separated for multiple connections)
+      - OPENAI_API_KEYS=${OPENAI_API_KEY:-};0p3n-w3bu!
+      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-};http://pipelines:9099
       # Database
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       - VECTOR_DB=pgvector
@@ -237,6 +325,10 @@ services:
       # User headers (forwarded by gateway)
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       - BYPASS_MODEL_ACCESS_CONTROL=true
+      # LangFuse Observability (in-process filter reads these)
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_BASE_URL:-}
       # =======================================================================
       # MCP Proxy Connection
       # =======================================================================
@@ -250,6 +342,7 @@ services:
         condition: service_healthy
     networks:
       - backend
+
 
   # ===========================================================================
   # ADMIN PORTAL - User/Group Management
@@ -267,6 +360,7 @@ services:
         condition: service_healthy
     networks:
       - backend
+
 
   # ===========================================================================
   # POSTGRESQL - Database
@@ -290,6 +384,7 @@ services:
     networks:
       - backend
 
+
   # ===========================================================================
   # REDIS - Sessions & Cache
   # ===========================================================================
@@ -307,6 +402,7 @@ services:
       retries: 5
     networks:
       - backend
+
 
   # ===========================================================================
   # MCP SERVERS - Tool Containers
@@ -328,6 +424,7 @@ services:
     networks:
       - backend
 
+
   # GitHub - Repository tools (26 tools)
   mcp-github:
     build: ./mcp-servers/github
@@ -338,6 +435,7 @@ services:
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
+
 
   # ClickUp - Task management (177+ tools)
   mcp-clickup:
@@ -353,6 +451,7 @@ services:
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
+
 
   # Trello - Kanban boards
   mcp-trello:
@@ -370,6 +469,7 @@ services:
     networks:
       - backend
 
+
   # SonarQube - Code quality analysis
   mcp-sonarqube:
     image: node:20-slim
@@ -382,9 +482,11 @@ services:
     environment:
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
       - SONARQUBE_URL=${SONARQUBE_URL:-https://sonarcloud.io}
+      - SONARQUBE_ORGANIZATION=${SONARQUBE_ORGANIZATION:-}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
+
 
   # Excel Creator - Spreadsheet generation
   mcp-excel:
@@ -394,6 +496,7 @@ services:
     networks:
       - backend
 
+
   # Dashboard - Executive dashboard generation
   mcp-dashboard:
     build: ./mcp-servers/dashboard
@@ -401,6 +504,73 @@ services:
     restart: unless-stopped
     networks:
       - backend
+
+
+  # Notion - Workspace and documentation
+  mcp-notion:
+    build: ./mcp-servers/notion
+    container_name: mcp-notion
+    restart: unless-stopped
+    environment:
+      - OPENAPI_MCP_HEADERS={"Authorization":"Bearer ${NOTION_API_KEY}","Notion-Version":"2022-06-28"}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+
+
+  # n8n MCP - AI-driven workflow creation and management (20 tools)
+  # Official image: ghcr.io/czlonkowski/n8n-mcp (13.7k stars)
+  mcp-n8n:
+    build: ./mcp-servers/n8n
+    container_name: mcp-n8n
+    restart: unless-stopped
+    environment:
+      - MCP_MODE=stdio
+      - N8N_API_URL=${N8N_API_URL:-http://n8n:5678}
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+      - LOG_LEVEL=error
+      - DISABLE_CONSOLE_OUTPUT=true
+      - N8N_MCP_TELEMETRY_DISABLED=true
+      - NODE_ENV=production
+      - REBUILD_ON_START=false
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - n8n-mcp-data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    networks:
+      - backend
+
+
+  # Scheduler MCP - Cron job management from chat (4 tools)
+  mcp-scheduler:
+    build: ./mcp-servers/scheduler
+    container_name: mcp-scheduler
+    restart: unless-stopped
+    environment:
+      - WEBHOOK_HANDLER_URL=http://webhook-handler:8086
+      - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
+    networks:
+      - backend
+    depends_on:
+      - webhook-handler
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
 
   # ===========================================================================
   # DATABASE INIT - Seed data from mcp-servers.json
@@ -417,6 +587,91 @@ services:
     restart: "no"
     networks:
       - backend
+
+  # ===========================================================================
+  # PIPELINES - External Pipe/Filter Runner
+  # ===========================================================================
+  # Runs Pipe Functions and Filters outside the Open WebUI process.
+  # Exposes OpenAI-compatible API on port 9099.
+  pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: pipelines
+    restart: unless-stopped
+    volumes:
+      - pipelines-data:/app/pipelines
+    environment:
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_BASE_URL}
+    networks:
+      - backend
+
+
+  # ===========================================================================
+  # LOKI - Log Aggregation
+  # ===========================================================================
+  # Stores and indexes logs received from Promtail.
+  loki:
+    image: grafana/loki:3.4
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=-", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # PROMTAIL - Log Shipper
+  # ===========================================================================
+  # Reads Docker container logs from /var/lib/docker/containers and ships to Loki.
+  # Auto-discovers all containers and labels logs by container name.
+  promtail:
+    image: grafana/promtail:3.4
+    container_name: promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+    depends_on:
+      - loki
+    networks:
+      - backend
+
+  # ===========================================================================
+  # GRAFANA - Log Dashboard + Alerts
+  # ===========================================================================
+  # Web UI for searching logs, viewing dashboards, and configuring alerts.
+  # Access via /grafana/ route in Caddy.
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 # =============================================================================
 # NETWORKS
@@ -437,3 +692,9 @@ volumes:
   redis-data:
   open-webui-data:
   n8n_data:
+  n8n-mcp-data:
+  pipelines-data:
+  loki-data:
+  promtail-positions:
+  analyzer-workspace:
+  grafana-data:

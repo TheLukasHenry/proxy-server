@@ -33,6 +33,18 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Block vulnerability scanners (PHP, CGI, shell exploits)
+	# ---------------------------------------------------------------------------
+	@scanners {
+		path /vendor/* /phpunit/* /lib/phpunit/* /cgi-bin/* /wp-admin/* /wp-login*
+		path /.env /.git/* /config.php /admin.php /shell* /eval-stdin*
+		path /laravel/* /yii/* /zend/* /drupal/* /wordpress/*
+	}
+	handle @scanners {
+		respond 404
+	}
+
+	# ---------------------------------------------------------------------------
 	# Health check endpoints (bypass gateway)
 	# ---------------------------------------------------------------------------
 	handle /health {
@@ -101,6 +113,47 @@
 		reverse_proxy webhook-handler:8086 {
 			header_down Cache-Control "no-store, no-cache, must-revalidate"
 		}
+	}
+
+	# ---------------------------------------------------------------------------
+	# n8n Workflow Engine (external webhook triggers)
+	# ---------------------------------------------------------------------------
+	handle /n8n/* {
+		uri strip_prefix /n8n
+		reverse_proxy n8n:5678
+	}
+
+	# ---------------------------------------------------------------------------
+	# Grafana - Log Dashboard (bypass gateway, direct to grafana)
+	# ---------------------------------------------------------------------------
+	handle /grafana/* {
+		reverse_proxy grafana:3000
+	}
+
+	# ---------------------------------------------------------------------------
+	# Static assets (bypass gateway to avoid rate limiting)
+	# ---------------------------------------------------------------------------
+	handle /_app/* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /static/* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /favicon* {
+		reverse_proxy open-webui:8080
+	}
+
+	handle /manifest.json {
+		reverse_proxy open-webui:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# WebSocket (bypass gateway)
+	# ---------------------------------------------------------------------------
+	handle /ws/* {
+		reverse_proxy open-webui:8080
 	}
 
 	# ---------------------------------------------------------------------------

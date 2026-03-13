@@ -12,7 +12,7 @@ class OpenWebUIClient:
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.timeout = 60.0  # 60 second timeout for AI responses
+        self.timeout = 120.0  # 120 second timeout for pipe function (4 phases)
 
     async def chat_completion(
         self,
@@ -64,6 +64,43 @@ class OpenWebUIClient:
         except Exception as e:
             logger.error(f"Error calling Open WebUI: {e}")
             return None
+
+    async def generate_deployment_notes(
+        self,
+        pr_details: dict,
+        model: str = "gpt-4-turbo",
+    ) -> Optional[str]:
+        """Generate deployment notes from PR details using AI."""
+        files_list = "\n".join(
+            f"- {f['filename']} ({f['status']}: +{f['additions']}/-{f['deletions']})"
+            for f in pr_details.get("files_changed", [])
+        )
+
+        prompt = (
+            f"Generate concise deployment notes for this merged pull request:\n\n"
+            f"PR #{pr_details['number']}: {pr_details['title']}\n"
+            f"Author: {pr_details['author']}\n"
+            f"Branch: {pr_details['branch']} -> {pr_details['base']}\n"
+            f"Merged: {pr_details.get('merged_at', 'unknown')}\n"
+            f"Files Changed: {pr_details.get('total_changes', 0)} lines "
+            f"across {len(pr_details.get('files_changed', []))} files\n\n"
+            f"Changed files:\n{files_list}\n\n"
+            f"Description:\n{pr_details.get('body') or 'No description provided.'}\n\n"
+            f"Format as:\n"
+            f"## Deployment Notes -- PR #{pr_details['number']}\n"
+            f"**Date:** [merge date]\n"
+            f"**What Changed:** [1-2 sentence summary]\n"
+            f"**Files Modified:** [bullet list of key files]\n"
+            f"**Impact:** [what users/systems are affected]\n"
+            f"**Rollback:** [how to revert if needed]\n"
+            f"**Testing:** [what was tested or needs testing]"
+        )
+
+        messages = [
+            {"role": "system", "content": "You are a deployment notes generator. Be concise and precise."},
+            {"role": "user", "content": prompt},
+        ]
+        return await self.chat_completion(messages=messages, model=model)
 
     async def analyze_github_issue(
         self,
@@ -272,3 +309,45 @@ Please provide:
         ]
 
         return await self.chat_completion(messages, model=model)
+
+    async def analyze_codebase(
+        self,
+        repo_overview: dict,
+        model: str = "gpt-4-turbo",
+    ) -> Optional[str]:
+        """Analyze a codebase and return a concise summary."""
+        full_name = repo_overview.get("full_name", "unknown")
+        description = repo_overview.get("description", "No description")
+        language = repo_overview.get("language", "Unknown")
+        topics = ", ".join(repo_overview.get("topics", [])) or "none"
+        tree = "\n".join(repo_overview.get("tree", []))
+
+        files_text = ""
+        for fname, content in repo_overview.get("files", {}).items():
+            files_text += f"\n--- {fname} ---\n{content}\n"
+
+        prompt = (
+            f"Analyze this GitHub repository and provide a concise summary.\n\n"
+            f"**Repository:** {full_name}\n"
+            f"**Description:** {description}\n"
+            f"**Primary Language:** {language}\n"
+            f"**Topics:** {topics}\n\n"
+            f"**File Tree (top-level):**\n{tree}\n\n"
+            f"**Key File Contents:**\n{files_text}\n\n"
+            f"Provide:\n"
+            f"1. What this application does (1-2 sentences)\n"
+            f"2. Tech stack\n"
+            f"3. Key components/architecture\n"
+            f"Keep it to 1-2 short paragraphs total."
+        )
+
+        messages = [
+            {"role": "system", "content": (
+                "You are a codebase analyst. Given repository metadata, file tree, "
+                "and key file contents, provide a concise summary of what the application "
+                "does, its tech stack, and architecture. Be brief and direct."
+            )},
+            {"role": "user", "content": prompt},
+        ]
+
+        return await self.chat_completion(messages=messages, model=model)

@@ -19,6 +19,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Base URLs — override for production
+$BASE_URL = if ($env:BASE_URL) { $env:BASE_URL.TrimEnd('/') } else { "http://localhost" }
+$MCP_PROXY_URL = if ($env:MCP_PROXY_URL) { $env:MCP_PROXY_URL } else { "${BASE_URL}:8000" }
+$OPEN_WEBUI_URL = if ($env:OPEN_WEBUI_URL) { $env:OPEN_WEBUI_URL } else { "${BASE_URL}:3000" }
 
 # Colors for output
 function Write-Header { param($msg) Write-Host "`n$("=" * 70)" -ForegroundColor Cyan; Write-Host "  $msg" -ForegroundColor Cyan; Write-Host "$("=" * 70)" -ForegroundColor Cyan }
@@ -51,7 +55,7 @@ WHAT THIS SCRIPT DOES:
 
 DEMO FLOW:
     After running this script, you can:
-    1. Open http://localhost:3000 (Open WebUI)
+    1. Open $OPEN_WEBUI_URL (Open WebUI)
     2. Go to Admin Panel > Settings > External Tools
     3. See MCP Proxy is already configured (via TOOL_SERVER_CONNECTIONS)
     4. Start a chat and ask about MCP tools
@@ -129,7 +133,7 @@ if (-not $TestOnly) {
     Write-Step "Waiting for MCP Proxy to be ready..."
     for ($i = 1; $i -le $maxAttempts; $i++) {
         try {
-            $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue
+            $response = Invoke-WebRequest -Uri "$MCP_PROXY_URL/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue
             if ($response.StatusCode -eq 200) {
                 Write-Success "MCP Proxy is ready"
                 break
@@ -157,7 +161,7 @@ Write-Header "Testing MCP Proxy Endpoints"
 # Test 1: Health check
 Write-Step "Test 1: Health check..."
 try {
-    $health = Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get
+    $health = Invoke-RestMethod -Uri "$MCP_PROXY_URL/health" -Method Get
     Write-Success "Health: $($health.status) - Tools cached: $($health.tools_cached)"
 } catch {
     Write-Error "Health check failed: $_"
@@ -166,7 +170,7 @@ try {
 # Test 2: List servers
 Write-Step "Test 2: List servers..."
 try {
-    $servers = Invoke-RestMethod -Uri "http://localhost:8000/servers" -Method Get
+    $servers = Invoke-RestMethod -Uri "$MCP_PROXY_URL/servers" -Method Get
     Write-Success "Found $($servers.total_servers) servers"
     foreach ($server in $servers.servers) {
         Write-Info "  - $($server.id): $($server.name) ($($server.tier))"
@@ -178,7 +182,7 @@ try {
 # Test 3: OpenAPI spec
 Write-Step "Test 3: OpenAPI spec..."
 try {
-    $openapi = Invoke-RestMethod -Uri "http://localhost:8000/openapi.json" -Method Get
+    $openapi = Invoke-RestMethod -Uri "$MCP_PROXY_URL/openapi.json" -Method Get
     $pathCount = ($openapi.paths.PSObject.Properties | Measure-Object).Count
     Write-Success "OpenAPI spec has $pathCount paths"
 } catch {
@@ -188,7 +192,7 @@ try {
 # Test 4: GitHub tools (if available)
 Write-Step "Test 4: GitHub tools..."
 try {
-    $github = Invoke-RestMethod -Uri "http://localhost:8000/github" -Method Get
+    $github = Invoke-RestMethod -Uri "$MCP_PROXY_URL/github" -Method Get
     Write-Success "GitHub: $($github.tool_count) tools available"
 } catch {
     Write-Info "GitHub MCP not available (may need GITHUB_TOKEN)"
@@ -197,7 +201,7 @@ try {
 # Test 5: Filesystem tools (if available)
 Write-Step "Test 5: Filesystem tools..."
 try {
-    $fs = Invoke-RestMethod -Uri "http://localhost:8000/filesystem" -Method Get
+    $fs = Invoke-RestMethod -Uri "$MCP_PROXY_URL/filesystem" -Method Get
     Write-Success "Filesystem: $($fs.tool_count) tools available"
 } catch {
     Write-Info "Filesystem MCP not available"
@@ -209,8 +213,8 @@ Write-Host @"
 
   SINGLE PROXY AUTO-DEPLOY - SUCCESS!
 
-  Open WebUI:     http://localhost:3000
-  MCP Proxy:      http://localhost:8000
+  Open WebUI:     $OPEN_WEBUI_URL
+  MCP Proxy:      $MCP_PROXY_URL
 
   What's configured:
   1. TOOL_SERVER_CONNECTIONS env var -> MCP Proxy pre-configured
@@ -218,7 +222,7 @@ Write-Host @"
   3. MCP Servers running -> GitHub and Filesystem tools available
 
   DEMO STEPS:
-  1. Open http://localhost:3000
+  1. Open $OPEN_WEBUI_URL
   2. Go to Admin Panel > Settings > External Tools
   3. See "MCP Proxy" is already configured!
   4. Start a chat and ask: "What MCP tools do you have?"

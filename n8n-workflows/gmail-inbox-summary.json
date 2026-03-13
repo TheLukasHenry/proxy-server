@@ -1,0 +1,65 @@
+{
+  "name": "gmail-inbox-summary",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-inbox-summary",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "id": "6dcddd38-f3c4-4b55-b85b-549db9c2bb2a",
+      "webhookId": "gmail-inbox-summary"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [440, 300],
+      "id": "90c689be-b8f6-436a-8267-cc1182ddd6de"
+    },
+    {
+      "parameters": {
+        "jsCode": "const emails = $input.all().map(item => ({\n  from: item.json.from?.text || item.json.from || 'unknown',\n  subject: item.json.subject || 'No subject',\n  date: item.json.date || '',\n  snippet: (item.json.snippet || item.json.textPlain || '').substring(0, 200)\n}));\nreturn [{ json: { emails, count: emails.length } }];"
+      },
+      "name": "Format Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "id": "3f226728-f1ce-471e-baab-9e4d89e4aa9f"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 300],
+      "id": "d4861a97-2933-4146-b585-80dbd59bc6bf"
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Gmail", "type": "main", "index": 0 }]] },
+    "Gmail": { "main": [[{ "node": "Format Emails", "type": "main", "index": 0 }]] },
+    "Format Emails": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

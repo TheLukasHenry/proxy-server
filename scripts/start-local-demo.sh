@@ -28,6 +28,11 @@ success() { echo -e "${GREEN}[OK]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 info() { echo -e "[INFO] $1"; }
 
+# Base URLs — override for production
+BASE_URL="${BASE_URL:-http://localhost}"
+MCP_PROXY_URL="${MCP_PROXY_URL:-${BASE_URL}:8000}"
+OPEN_WEBUI_URL="${OPEN_WEBUI_URL:-${BASE_URL}:3000}"
+
 SKIP_BUILD=false
 TEST_ONLY=false
 
@@ -119,7 +124,7 @@ if [ "$TEST_ONLY" = false ]; then
     # Wait for MCP Proxy
     step "Waiting for MCP Proxy to be ready..."
     for i in $(seq 1 $max_attempts); do
-        if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        if curl -s $MCP_PROXY_URL/health > /dev/null 2>&1; then
             success "MCP Proxy is ready"
             break
         fi
@@ -142,7 +147,7 @@ header "Testing MCP Proxy Endpoints"
 
 # Test 1: Health check
 step "Test 1: Health check..."
-health=$(curl -s http://localhost:8000/health)
+health=$(curl -s $MCP_PROXY_URL/health)
 if echo "$health" | grep -q "healthy"; then
     success "Health check passed"
     echo "  $health"
@@ -152,13 +157,13 @@ fi
 
 # Test 2: List servers
 step "Test 2: List servers..."
-servers=$(curl -s http://localhost:8000/servers)
+servers=$(curl -s $MCP_PROXY_URL/servers)
 total=$(echo "$servers" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_servers', 0))" 2>/dev/null || echo "0")
 success "Found $total servers"
 
 # Test 3: OpenAPI spec
 step "Test 3: OpenAPI spec..."
-openapi=$(curl -s http://localhost:8000/openapi.json)
+openapi=$(curl -s $MCP_PROXY_URL/openapi.json)
 if echo "$openapi" | grep -q "paths"; then
     success "OpenAPI spec available"
 else
@@ -167,7 +172,7 @@ fi
 
 # Test 4: GitHub tools
 step "Test 4: GitHub tools..."
-github=$(curl -s http://localhost:8000/github 2>/dev/null)
+github=$(curl -s $MCP_PROXY_URL/github 2>/dev/null)
 if echo "$github" | grep -q "tool_count"; then
     tools=$(echo "$github" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tool_count', 0))" 2>/dev/null || echo "0")
     success "GitHub: $tools tools available"
@@ -177,7 +182,7 @@ fi
 
 # Test 5: Filesystem tools
 step "Test 5: Filesystem tools..."
-fs=$(curl -s http://localhost:8000/filesystem 2>/dev/null)
+fs=$(curl -s $MCP_PROXY_URL/filesystem 2>/dev/null)
 if echo "$fs" | grep -q "tool_count"; then
     tools=$(echo "$fs" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tool_count', 0))" 2>/dev/null || echo "0")
     success "Filesystem: $tools tools available"
@@ -191,8 +196,8 @@ cat << EOF
 
   SINGLE PROXY AUTO-DEPLOY - SUCCESS!
 
-  Open WebUI:     http://localhost:3000
-  MCP Proxy:      http://localhost:8000
+  Open WebUI:     $OPEN_WEBUI_URL
+  MCP Proxy:      $MCP_PROXY_URL
 
   What's configured:
   1. TOOL_SERVER_CONNECTIONS env var -> MCP Proxy pre-configured
@@ -200,7 +205,7 @@ cat << EOF
   3. MCP Servers running -> GitHub and Filesystem tools available
 
   DEMO STEPS:
-  1. Open http://localhost:3000
+  1. Open $OPEN_WEBUI_URL
   2. Go to Admin Panel > Settings > External Tools
   3. See "MCP Proxy" is already configured!
   4. Start a chat and ask: "What MCP tools do you have?"

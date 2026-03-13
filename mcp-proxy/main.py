@@ -64,6 +64,7 @@ from tool_embeddings import (
     search_tools_by_query,
     get_embeddings_stats
 )
+from mcp_http_client import get_mcp_client, MCPStreamableClient
 from admin_api import admin_router
 
 
@@ -127,6 +128,50 @@ async def refresh_tools_cache():
     for server_id, server in enabled_servers.items():
         api_key = os.getenv(server.api_key_env, "test-key") if server.api_key_env else "test-key"
 
+        # MCP Streamable HTTP servers use JSON-RPC, not OpenAPI
+        if server.tier == ServerTier.MCP_HTTP:
+            try:
+                client = get_mcp_client(server.endpoint_url, api_key)
+                mcp_tools = await client.list_tools()
+                tools_count = 0
+                for tool in mcp_tools:
+                    original_name = tool.get("name", "")
+                    tool_name = f"{server_id}_{original_name}"
+                    input_schema = tool.get("inputSchema", {})
+
+                    # Convert MCP inputSchema to OpenAPI requestBody format
+                    request_body = {}
+                    if input_schema:
+                        request_body = {
+                            "required": True,
+                            "content": {
+                                "application/json": {
+                                    "schema": input_schema
+                                }
+                            }
+                        }
+
+                    TOOLS_CACHE[tool_name] = {
+                        "name": tool_name,
+                        "original_name": original_name,
+                        "original_path": f"/{original_name}",
+                        "tenant_id": server_id,
+                        "tenant_name": server.display_name,
+                        "description": tool.get("description", f"{server.display_name}: {original_name}"),
+                        "request_body": request_body,
+                        "responses": {"200": {"description": "Successful Response"}},
+                        "parameters": [],
+                        "_mcp_tool": True,  # Flag for MCP protocol routing
+                    }
+                    tools_count += 1
+
+                if tools_count > 0:
+                    print(f"  {server_id}: Cached {tools_count} MCP tools")
+            except Exception as e:
+                print(f"  {server_id}: MCP HTTP error: {e}")
+            continue
+
+        # Standard OpenAPI servers
         openapi = await fetch_openapi_from_tenant(
             server_id,
             server.endpoint_url,
@@ -1050,6 +1095,38 @@ async def fetch_server_tools(server: MCPServerConfig) -> List[Dict]:
             if tool["tenant_id"] == server.server_id
         ]
 
+    # MCP Streamable HTTP servers: use MCP protocol to list tools
+    if server.tier == ServerTier.MCP_HTTP:
+        # First check cache
+        cached = [
+            {
+                "name": tool["original_name"],
+                "description": tool["description"],
+                "endpoint": f"/{server.server_id}/{tool['original_name']}"
+            }
+            for tool_name, tool in TOOLS_CACHE.items()
+            if tool["tenant_id"] == server.server_id
+        ]
+        if cached:
+            return cached
+
+        # Fetch live from MCP server
+        try:
+            api_key = os.getenv(server.api_key_env, "") if server.api_key_env else ""
+            client = get_mcp_client(server.endpoint_url, api_key)
+            mcp_tools = await client.list_tools()
+            return [
+                {
+                    "name": t["name"],
+                    "description": t.get("description", t["name"]),
+                    "endpoint": f"/{server.server_id}/{t['name']}"
+                }
+                for t in mcp_tools
+            ]
+        except Exception as e:
+            print(f"Error fetching MCP tools from {server.server_id}: {e}")
+            return [{"error": f"Could not fetch MCP tools from {server.server_id}: {e}"}]
+
     # For remote servers, try to fetch OpenAPI
     try:
         api_key = os.getenv(server.api_key_env, "") if server.api_key_env else ""
@@ -1122,6 +1199,25 @@ async def execute_on_server(
         if override_url:
             endpoint_url = override_url
             print(f"  [DYNAMIC-ROUTING] Routing {server.server_id} to {override_url} for tenant {tenant_ids}")
+
+    # MCP Streamable HTTP: use JSON-RPC protocol instead of REST
+    if server.tier == ServerTier.MCP_HTTP:
+        clean_path = tool_path.strip("/")
+        print(f"=== Executing MCP tool on {server.server_id} ===")
+        print(f"  Tool: {clean_path}")
+        print(f"  Key source: {key_source}")
+        print(f"  Body: {body}")
+
+        try:
+            client = get_mcp_client(endpoint_url, api_key)
+            result = await client.call_tool(clean_path, body)
+            print(f"  MCP Response: OK")
+            return result
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"MCP error on {server.server_id}/{clean_path}: {str(e)}"
+            )
 
     # Build the full URL
     # For local servers, tool_path might already have leading slash

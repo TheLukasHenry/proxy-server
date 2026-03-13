@@ -32,7 +32,15 @@ class MCPProxyClient:
         Returns:
             Tool response dict, or None on error
         """
-        url = f"{self.base_url}/{server_id}/{tool_name}"
+        # Build candidate tool paths. MCP servers vary:
+        #   GitHub mcpo:  /get_me  (no prefix in endpoint)
+        #   ClickUp mcpo: /clickup_get_workspaces  (prefix in endpoint)
+        # Try the name as-given first, then with server prefix stripped.
+        candidates = [tool_name]
+        prefix = f"{server_id}_"
+        if tool_name.startswith(prefix):
+            candidates.append(tool_name[len(prefix):])
+
         headers = {
             "X-User-Email": self.user_email,
             "X-User-Groups": self.user_groups,
@@ -42,12 +50,16 @@ class MCPProxyClient:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, json=body, headers=headers)
-                response.raise_for_status()
-
-                result = response.json()
-                logger.info(f"MCP tool {server_id}/{tool_name} executed successfully")
-                return result
+                for name in candidates:
+                    url = f"{self.base_url}/{server_id}/{name}"
+                    response = await client.post(url, json=body, headers=headers)
+                    if response.status_code == 404 and name != candidates[-1]:
+                        logger.debug(f"MCP tool {server_id}/{name} not found, trying next")
+                        continue
+                    response.raise_for_status()
+                    result = response.json()
+                    logger.info(f"MCP tool {server_id}/{name} executed successfully")
+                    return result
 
         except httpx.HTTPStatusError as e:
             logger.error(
